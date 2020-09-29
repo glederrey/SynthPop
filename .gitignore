@@ -132,6 +132,6 @@ dmypy.json
 .idea
 data/Chicago
 data/GEV_SM
-data/LondonTravel
+data/LPMC
 data/MZ
 code/output_TGAN
