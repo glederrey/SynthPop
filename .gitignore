@@ -127,3 +127,11 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# my ignores
+.idea
+data/Chicago
+data/GEV_SM
+data/LondonTravel
+data/MZ
+code/output_TGAN
