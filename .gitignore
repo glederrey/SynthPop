@@ -137,4 +137,6 @@ data/LPMC
 data/MZ
 data/MTMC
 
+synth_data
+
 code/output_TGAN

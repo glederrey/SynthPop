@@ -34,7 +34,8 @@ def maximum_mean_discrepancy(x, y, kernel=utils.gaussian_kernel_matrix):
   return cost
 
 def mmd_loss(source_samples, target_samples, weight, scope=None):
-  """Adds a similarity loss term, the MMD between two representations.
+  """
+  Adds a similarity loss term, the MMD between two representations.
   This Maximum Mean Discrepancy (MMD) loss is calculated with a number of
   different Gaussian kernels.
   Args:
