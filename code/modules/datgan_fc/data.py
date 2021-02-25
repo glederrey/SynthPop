@@ -270,10 +270,10 @@ class MultiModalNumberTransformer:
         probs = data[:, 1:]
 
         # Before:
-        #p_argmax = np.argmax(probs, axis=1)
+        p_argmax = np.argmax(probs, axis=1)
 
         # Fix: simulate using the probas
-        p_argmax = [np.random.choice(np.arange(0, len(pr)), p=pr) for pr in probs]
+        #p_argmax = [np.random.choice(np.arange(0, len(pr)), p=pr) for pr in probs]
 
         mean = np.asarray(info['means'])
         std = np.asarray(info['stds'])

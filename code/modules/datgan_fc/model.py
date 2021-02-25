@@ -282,19 +282,11 @@ class GraphBuilder(ModelDescBase):
             # LSTM cell
             cell = tf.nn.rnn_cell.LSTMCell(self.num_gen_rnn)
 
-            # initialize the variables
-            zero_state = cell.zero_state(self.batch_size, dtype='float32')
-            zero_attention = tf.zeros(
-                shape=(self.batch_size, self.num_gen_rnn), dtype='float32')
-            zero_input = tf.get_variable(name='go', shape=(1, self.num_gen_feature))  # <GO>
-            zero_input = tf.tile(zero_input, [self.batch_size, 1])
-
             # Some variables
             ptr = 0
             outputs = []
             states = {}
 
-            lstm_state = []
             inputs = []
             attentions = []
             name_to_id = {}
@@ -316,26 +308,32 @@ class GraphBuilder(ModelDescBase):
 
                     # Get the inputs, attention and state vector in function of the number of in edges
                     if len(in_edges[col]) == 0:
-                        input = zero_input
-                        attention = zero_attention
+                        input = tf.get_variable(name='go_{}'.format(col), shape=(1, self.num_gen_feature))
+                        input = tf.tile(input, [self.batch_size, 1])
+                        attention = tf.zeros(shape=(self.batch_size, self.num_gen_rnn), dtype='float32')
                         # LSTM state
-                        state = zero_state
-                        # List of previous states for attention vector
-                        states[col] = []
+                        state = cell.zero_state(self.batch_size, dtype='float32')
                     else:
                         id_ = name_to_id[in_edges[col][0]]
                         input = inputs[id_]
                         attention = attentions[id_]
                         # LSTM state
-                        state = lstm_state[id_]
-                        # List of previous states for attention vector
-                        states[col] = states[in_edges[col][0]]
+                        state = states[in_edges[col][0]][-1]
 
                     # Concat the input with the random variable z
                     input = tf.concat([input, z], axis=1)
 
+                    # Compute the previous states
+                    ancestors = nx.ancestors(self.dag, col)
+                    prev_states = []
+                    for n in self.dag.nodes:
+                        if n in ancestors:
+                            for s in states[n]:
+                                prev_states.append(s[1])
+
                     [tmp_attention, tmp_states, tmp_inputs,
-                     tmp_outputs, state, ptr] = self.create_cell(cell, z, col, col_info, input, attention, state, ptr)
+                     tmp_outputs, ptr] = self.create_cell(cell, z, col, col_info, input,
+                                                          attention, prev_states, state, ptr)
 
                     # Add the input to the list of inputs
                     inputs.append(tmp_inputs)
@@ -344,7 +342,6 @@ class GraphBuilder(ModelDescBase):
                     attentions.append(tmp_attention)
 
                     # Add the state to the list of states
-                    lstm_state.append(state)
                     states[col] = tmp_states
 
                     # Add the list of outputs to the outputs
@@ -355,25 +352,31 @@ class GraphBuilder(ModelDescBase):
                     # multi-inputs LSTM
                     miLSTM_outputs = []
                     miLSTM_states = []
-                    miLSTM_lstm_state = []
                     miLSTM_inputs = []
                     miLSTM_attentions = []
 
+                    # Go through all in edges and create an LSTM cell
                     for name in in_edges[col]:
                         id_ = name_to_id[name]
                         input = inputs[id_]
                         attention = attentions[id_]
                         # LSTM state
-                        state = lstm_state[id_]
-                        # List of previous states for attention vector
-                        states[col] = states[name]
+                        state = states[name][-1]
 
                         # Concat the input with the random variable z
                         input = tf.concat([input, z], axis=1)
 
+                        # Compute the previous states
+                        ancestors = nx.ancestors(self.dag, col)
+                        prev_states = []
+                        for n in self.dag.nodes:
+                            if n in ancestors:
+                                for s in states[n]:
+                                    prev_states.append(s[1])
+
                         [tmp_attention, tmp_states, tmp_inputs,
-                         tmp_outputs, state, ptr] = self.create_cell(cell, z, col, col_info, input, attention, state,
-                                                                     ptr)
+                         tmp_outputs, ptr] = self.create_cell(cell, z, col, col_info, input,
+                                                              attention, prev_states, state, ptr)
 
                         # Add the input to the list of inputs
                         miLSTM_inputs.append(tmp_inputs)
@@ -382,49 +385,71 @@ class GraphBuilder(ModelDescBase):
                         miLSTM_attentions.append(tmp_attention)
 
                         # Add the state to the list of states
-                        miLSTM_lstm_state.append(state)
                         miLSTM_states.append(tmp_states)
 
                         # Add the list of outputs to the outputs
                         miLSTM_outputs.append(tmp_outputs)
 
-                    # Average of inputs
-                    inputs.append(tf.keras.layers.Average()(miLSTM_inputs))
+                    # Use of FCs to transform the multi-outputs into a single one
+                    with tf.variable_scope("%02d" % ptr):
+                        # FC for inputs
+                        tmp = tf.concat(miLSTM_inputs, axis=1)
+                        tmp_fc = FullyConnected('FC_inputs', tmp, self.num_gen_feature, nl=None)
+                        inputs.append(tmp_fc)
 
-                    # Average of outputs
-                    for i in range(len(miLSTM_outputs[0])):
-                        tmp = []
-                        for j in range(len(miLSTM_outputs)):
-                            tmp.append(miLSTM_outputs[j][i])
+                        # FC for outputs
+                        if col_info['type'] == 'continuous':
+                            tmp = []
+                            for j in range(len(miLSTM_outputs)):
+                                tmp.append(miLSTM_outputs[j][0])
 
-                        outputs.append(tf.keras.layers.Average()(tmp))
+                            tmp_fc = FullyConnected('FC_output_cont_0', tf.concat(tmp, axis=1), 1, nl=tf.tanh)
+                            outputs.append(tmp_fc)
 
-                    # Average of attentions
-                    attentions.append(tf.keras.layers.Average()(miLSTM_attentions))
+                            tmp = []
+                            for j in range(len(miLSTM_outputs)):
+                                tmp.append(miLSTM_outputs[j][1])
 
-                    # Average of lstm_state (LSTMStateTuple)
-                    tmp_state = []
-                    for i in range(2): #LSTMStateTuple contains 2 objects
-                        tmp = []
-                        for j in range(len(miLSTM_lstm_state)):
-                            tmp.append(miLSTM_lstm_state[j][i])
+                            tmp_fc = FullyConnected('FC_output_cont_1', tf.concat(tmp, axis=1), self.gaussian_components,
+                                                    nl=tf.nn.softmax)
+                            outputs.append(tmp_fc)
 
-                        tmp_state.append(tf.keras.layers.Average()(tmp))
+                        elif col_info['type'] == 'category':
+                            tmp = []
+                            for j in range(len(miLSTM_outputs)):
+                                tmp.append(miLSTM_outputs[j][0])
 
-                    lstm_state.append(tf.nn.rnn_cell.LSTMStateTuple(tmp_state[0], tmp_state[1]))
+                            tmp_fc = FullyConnected('FC_output_cat_0', tf.concat(tmp, axis=1), col_info['n'],
+                                                    nl=tf.nn.softmax)
+                            outputs.append(tmp_fc)
 
-                    # Average of states
-                    states[col] = []
-                    for i in range(len(miLSTM_states[0])):
-                        tmp = []
-                        for j in range(len(miLSTM_states)):
-                            tmp.append(miLSTM_states[j][i])
+                        # FC for attentions
+                        tmp = tf.concat(miLSTM_attentions, axis=1)
+                        tmp_fc = FullyConnected('FC_attentions', tmp, self.num_gen_rnn, nl=None)
+                        attentions.append(tmp_fc)
 
-                        states[col].append(tf.keras.layers.Average()(tmp))
+                        # LSTM for lstm_state (LSTMStateTuple)
+                        states[col] = []
+                        # miLSTM_states is a list of list of tuples
+                        for j in range(len(miLSTM_states[0])):
+                            tmp_state = []
+                            for k in range(2):  # tuple
+                                tmp = []
+                                for i in range(len(miLSTM_states)):
+                                    tmp.append(miLSTM_states[i][j][k])
+
+                                tmp_fc = FullyConnected('FC_lstm_state_{}_{}'.format(j,k), tf.concat(tmp, axis=1),
+                                                        self.num_gen_rnn, nl=None)
+
+                                tmp_state.append(tmp_fc)
+
+                            states[col].append(tf.nn.rnn_cell.LSTMStateTuple(tmp_state[0], tmp_state[1]))
+
+                    ptr += 1
 
         return outputs
 
-    def create_cell(self, cell, z, col, col_info, inputs, attention, state, ptr):
+    def create_cell(self, cell, z, col, col_info, inputs, attention, prev_states, state, ptr):
         """
         Function that create the cells for the generator.
         """
@@ -437,35 +462,40 @@ class GraphBuilder(ModelDescBase):
         # create the cell(s)
         if col_info['type'] == 'continuous':
             output, state = cell(tf.concat([inputs, attention], axis=1), state)
-            tmp_states.append(state[1])
+            prev_states.append(state[1])
+            tmp_states.append(state)
 
             gaussian_components = col_info['n']
             with tf.variable_scope("%02d" % ptr):
                 h = FullyConnected('FC', output, self.num_gen_feature, nl=tf.tanh)
                 tmp_outputs.append(FullyConnected('FC2', h, 1, nl=tf.tanh))
                 tmp_input = tf.concat([h, z], axis=1)
-                attw = tf.get_variable("attw", shape=(len(tmp_states), 1, 1))
+                attw = tf.get_variable("attw", shape=(len(prev_states), 1, 1))
                 attw = tf.nn.softmax(attw, axis=0)
-                tmp_attention = tf.reduce_sum(tf.stack(tmp_states, axis=0) * attw, axis=0)
+                tmp_attention = tf.reduce_sum(tf.stack(prev_states, axis=0) * attw, axis=0)
 
             ptr += 1
 
             output, state = cell(tf.concat([tmp_input, tmp_attention], axis=1), state)
-            tmp_states.append(state[1])
+            prev_states.append(state[1])
+            tmp_states.append(state)
+
             with tf.variable_scope("%02d" % ptr):
                 h = FullyConnected('FC', output, self.num_gen_feature, nl=tf.tanh)
                 w = FullyConnected('FC2', h, gaussian_components, nl=tf.nn.softmax)
                 tmp_outputs.append(w)
                 tmp_input = FullyConnected('FC3', w, self.num_gen_feature, nl=tf.identity)
-                attw = tf.get_variable("attw", shape=(len(tmp_states), 1, 1))
+                attw = tf.get_variable("attw", shape=(len(prev_states), 1, 1))
                 attw = tf.nn.softmax(attw, axis=0)
-                tmp_attention = tf.reduce_sum(tf.stack(tmp_states, axis=0) * attw, axis=0)
+                tmp_attention = tf.reduce_sum(tf.stack(prev_states, axis=0) * attw, axis=0)
 
             ptr += 1
 
         elif col_info['type'] == 'category':
             output, state = cell(tf.concat([inputs, attention], axis=1), state)
-            tmp_states.append(state[1])
+            prev_states.append(state[1])
+            tmp_states.append(state)
+
             with tf.variable_scope("%02d" % ptr):
                 h = FullyConnected('FC', output, self.num_gen_feature, nl=tf.tanh)
                 w = FullyConnected('FC2', h, col_info['n'], nl=tf.nn.softmax)
@@ -473,9 +503,9 @@ class GraphBuilder(ModelDescBase):
                 one_hot = tf.one_hot(tf.argmax(w, axis=1), col_info['n'])
                 tmp_input = FullyConnected(
                     'FC3', one_hot, self.num_gen_feature, nl=tf.identity)
-                attw = tf.get_variable("attw", shape=(len(tmp_states), 1, 1))
+                attw = tf.get_variable("attw", shape=(len(prev_states), 1, 1))
                 attw = tf.nn.softmax(attw, axis=0)
-                tmp_attention = tf.reduce_sum(tf.stack(tmp_states, axis=0) * attw, axis=0)
+                tmp_attention = tf.reduce_sum(tf.stack(prev_states, axis=0) * attw, axis=0)
 
             ptr += 1
 
@@ -485,7 +515,7 @@ class GraphBuilder(ModelDescBase):
                 "`continuous`. Instead it was {}.".format(col, col_info['type'])
             )
 
-        return tmp_attention, tmp_states, tmp_input, tmp_outputs, state, ptr
+        return tmp_attention, tmp_states, tmp_input, tmp_outputs, ptr
 
     @staticmethod
     def batch_diversity(l, n_kernel=10, kernel_dim=10):
