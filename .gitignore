@@ -131,14 +131,9 @@ dmypy.json
 # my ignores
 .idea
 
-data/Chicago
-data/GEV_SM
-data/LPMC
-data/MZ
-data/MTMC
-
+data
+tmp_data
 synth_data
-
 output
 
 
