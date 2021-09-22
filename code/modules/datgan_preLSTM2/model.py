@@ -24,8 +24,8 @@ from tensorpack.tfutils.scope_utils import auto_reuse_variable_scope
 from tensorpack.tfutils.summary import add_moving_summary
 from tensorpack.utils.argtools import memoized
 
-from modules.datgan_preLSTM.data import Preprocessor, RandomZData, TGANDataFlow
-from modules.datgan_preLSTM.trainer import GANTrainer
+from modules.datgan_preLSTM2.data import Preprocessor, RandomZData, TGANDataFlow
+from modules.datgan_preLSTM2.trainer import GANTrainer
 
 import networkx as nx
 
@@ -436,7 +436,6 @@ class GraphBuilder(ModelDescBase):
             prev_states.append(state[1])
             tmp_states.append(state)
 
-            gaussian_components = col_info['n']
             with tf.variable_scope("%02d" % ptr):
                 h = FullyConnected('FC', output, self.num_gen_feature, nl=tf.tanh)
                 tmp_outputs.append(FullyConnected('FC2', h, 1, nl=tf.tanh))
@@ -453,9 +452,11 @@ class GraphBuilder(ModelDescBase):
 
             with tf.variable_scope("%02d" % ptr):
                 h = FullyConnected('FC', output, self.num_gen_feature, nl=tf.tanh)
-                w = FullyConnected('FC2', h, gaussian_components, nl=tf.nn.softmax)
+                w = FullyConnected('FC2', h, col_info['n'], nl=tf.nn.softmax)
                 tmp_outputs.append(w)
-                tmp_input = FullyConnected('FC3', w, self.num_gen_feature, nl=tf.identity)
+                one_hot = tf.one_hot(tf.argmax(w, axis=1), col_info['n'])
+                tmp_input = FullyConnected(
+                    'FC3', one_hot, self.num_gen_feature, nl=tf.identity)
                 attw = tf.get_variable("attw", shape=(len(prev_states), 1, 1))
                 attw = tf.nn.softmax(attw, axis=0)
                 tmp_attention = tf.reduce_sum(tf.stack(prev_states, axis=0) * attw, axis=0)
@@ -867,6 +868,7 @@ class DATGAN:
 
         self.preprocessor = Preprocessor(continuous_columns=self.continuous_columns, columns_order=self.var_order)
         data = self.preprocessor.fit_transform(data)
+
         self.metadata = self.preprocessor.metadata
         dataflow = TGANDataFlow(data, self.metadata)
         batch_data = BatchData(dataflow, self.batch_size)

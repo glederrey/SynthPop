@@ -8,7 +8,7 @@ import urllib
 
 import numpy as np
 import pandas as pd
-from sklearn.mixture import GaussianMixture
+from sklearn.mixture import BayesianGaussianMixture
 from sklearn.preprocessing import LabelEncoder
 from tensorpack import DataFlow, RNGDataFlow
 
@@ -209,7 +209,8 @@ class MultiModalNumberTransformer:
     component actually works, which is equivalent to not clustering this feature.
 
     Args:
-        num_modes(int): Number of modes on given data.
+        max_clusters(int): Maximum number of Gaussian distributions in Bayesian GMM
+        weight_threshold(float): Weight threshold for a Gaussian distribution to be kept.
 
     Attributes:
         num_modes(int): Number of components in the `skelarn.mixture.GaussianMixture`_ model.
@@ -219,13 +220,14 @@ class MultiModalNumberTransformer:
 
     """
 
-    def __init__(self, num_modes=5):
+    def __init__(self, max_clusters=10, weight_threshold=0.005):
         """Initialize instance."""
-        self.num_modes = num_modes
+        self.max_clusters = max_clusters
+        self.weight_threshold = weight_threshold
 
     @check_inputs
     def transform(self, data):
-        """Cluster values using a `skelarn.mixture.GaussianMixture`_ model.
+        """Cluster values using a `skelarn.mixture.BayesianGaussianMixture`_ model.
 
         Args:
             data(numpy.ndarray): Values to cluster in array of shape (n,1).
@@ -234,28 +236,49 @@ class MultiModalNumberTransformer:
             tuple[numpy.ndarray, numpy.ndarray, list, list]: Tuple containg the features,
             probabilities, averages and stds of the given data.
 
-        .. _skelarn.mixture.GaussianMixture: https://scikit-learn.org/stable/modules/generated/
-            sklearn.mixture.GaussianMixture.html
+        .. _skelarn.mixture.BayesianGaussianMixture: https://scikit-learn.org/stable/modules/generated/
+            sklearn.mixture.BayesianGaussianMixture.html
 
         """
-        model = GaussianMixture(self.num_modes)
+        model = BayesianGaussianMixture(
+            self.max_clusters,
+            weight_concentration_prior_type='dirichlet_process',
+            weight_concentration_prior=0.001,
+            n_init=1,
+            #random_state=13
+        )
         model.fit(data)
 
-        means = model.means_.reshape((1, self.num_modes))
-        stds = np.sqrt(model.covariances_).reshape((1, self.num_modes))
+        valid_component_indicator  = model.weights_ > self.weight_threshold
 
-        features = (data - means) / (2 * stds)
-        probs = model.predict_proba(data)
-        argmax = np.argmax(probs, axis=1)
-        idx = np.arange(len(features))
-        features = features[idx, argmax].reshape([-1, 1])
+        num_components = valid_component_indicator.sum()
 
-        features = np.clip(features, -0.99, 0.99)
+        means = model.means_.reshape((1, self.max_clusters))
+        stds = np.sqrt(model.covariances_).reshape((1, self.max_clusters))
 
-        return features, probs, list(means.flat), list(stds.flat)
+        # Fix this shitty normalization
+        normalized_values  = ((data - means) / (4 * stds))[:, valid_component_indicator]
+        probs = model.predict_proba(data)[:, valid_component_indicator]
 
-    @staticmethod
-    def inverse_transform(data, info):
+        selected_component = np.zeros(len(data), dtype='int')
+        for i in range(len(data)):
+            component_prob_t = probs[i] + 1e-6
+            component_prob_t = component_prob_t / component_prob_t.sum()
+            selected_component[i] = np.random.choice(
+                np.arange(num_components), p=component_prob_t)
+
+        selected_normalized_value = normalized_values[
+            np.arange(len(data)), selected_component].reshape([-1, 1])
+        # Then remove clips?
+        selected_normalized_value = np.clip(selected_normalized_value, -.99, .99)
+
+        selected_component_onehot = np.zeros_like(probs)
+        selected_component_onehot[np.arange(len(data)), selected_component] = 1
+
+        return selected_normalized_value, selected_component_onehot, model, valid_component_indicator
+
+    #@staticmethod
+    def inverse_transform(self, data, info):
         """Reverse the clustering of values.
 
         Args:
@@ -266,22 +289,25 @@ class MultiModalNumberTransformer:
            numpy.ndarray: Values in the original space.
 
         """
-        features = data[:, 0]
-        probs = data[:, 1:]
+        gmm = info['transform']
+        valid_component_indicator = info['transform_aux']
 
-        # Before:
-        p_argmax = np.argmax(probs, axis=1)
+        selected_normalized_value = data[:, 0]
+        selected_component_probs = data[:, 1:]
 
-        # Fix: simulate using the probas
-        #p_argmax = [np.random.choice(np.arange(0, len(pr)), p=pr) for pr in probs]
+        selected_normalized_value = np.clip(selected_normalized_value, -1, 1)
+        component_probs = np.zeros((len(data), self.max_clusters))
+        component_probs[:, valid_component_indicator] = selected_component_probs
 
-        mean = np.asarray(info['means'])
-        std = np.asarray(info['stds'])
+        means = gmm.means_.reshape([-1])
+        stds = np.sqrt(gmm.covariances_).reshape([-1])
+        # Fix to simulate this instead?
+        selected_component = np.argmax(component_probs, axis=1)
 
-        select_mean = mean[p_argmax]
-        select_std = std[p_argmax]
+        mean_t = means[selected_component]
+        std_t = stds[selected_component]
 
-        return features * 2 * select_std + select_mean
+        return selected_normalized_value * 4 * std_t + mean_t
 
 
 class Preprocessor:
@@ -334,15 +360,15 @@ class Preprocessor:
         for col in self.columns_order:
             if col in self.continuous_columns:
                 column_data = data[col].values.reshape([-1, 1])
-                features, probs, means, stds = self.continous_transformer.transform(column_data)
+                features, probs, model, valid_comp_ind = self.continous_transformer.transform(column_data)
                 transformed_data[col] = np.concatenate((features, probs), axis=1)
 
                 if fitting:
                     details[col] = {
                         "type": "continuous",
-                        "means": means,
-                        "stds": stds,
-                        "n": 5
+                        "n": len(probs[0]),
+                        "transform": model,
+                        "transform_aux": valid_comp_ind
                     }
 
             else:
