@@ -13,7 +13,6 @@ import json
 import os
 import pickle
 import tarfile
-import copy
 
 import numpy as np
 import tensorflow as tf
@@ -779,6 +778,7 @@ class DATGAN:
         """Initialize object."""
         # Output
         self.continuous_columns = continuous_columns
+        self.data_dir = os.path.join(output, 'data')
         self.log_dir = os.path.join(output, 'logs')
         self.model_dir = os.path.join(output, 'model')
         self.output = output
@@ -860,14 +860,50 @@ class DATGAN:
             None
 
         """
+        self.restore_path = os.path.join(self.model_dir, 'checkpoint')
+        self.preprocessor = None
+
         # Verify that the DAG has the same number of nodes as the number of variables in the data
         # and that it's indeed a DAG.
         self.dag = dag
         self.verify_dag(data)
         self.var_order = self.get_order_variables()
 
-        self.preprocessor = Preprocessor(continuous_columns=self.continuous_columns, columns_order=self.var_order)
-        data = self.preprocessor.fit_transform(data)
+        if os.path.isfile(self.restore_path) and self.restore_session:
+            logger.info("Found an already existing model. Loading it!")
+
+            session_init = SaverRestore(self.restore_path)
+            with open(os.path.join(self.log_dir, 'stats.json')) as f:
+                starting_epoch = json.load(f)[-1]['epoch_num'] + 1
+
+            # Load preprocessed data
+            with open(os.path.join(self.data_dir, 'preprocessed_data.pkl'), 'rb') as f:
+                data = pickle.load(f)
+            with open(os.path.join(self.data_dir, 'preprocessor.pkl'), 'rb') as f:
+                self.preprocessor = pickle.load(f)
+
+            logger.info("Preprocessed data have been loaded!")
+
+        else:
+            logger.info("No model found. Starting from scratch!")
+            session_init = None
+            starting_epoch = 1
+
+            # Preprocessing steps
+            logger.info("Preprocessing the data!")
+
+            self.preprocessor = Preprocessor(continuous_columns=self.continuous_columns, columns_order=self.var_order)
+            data = self.preprocessor.fit_transform(data)
+
+            # Save the preprocessor and the data
+            if not os.path.exists(self.data_dir):
+                os.makedirs(self.data_dir, exist_ok=True)
+            with open(os.path.join(self.data_dir, 'preprocessed_data.pkl'), 'wb') as f:
+                pickle.dump(data, f)
+            with open(os.path.join(self.data_dir, 'preprocessor.pkl'), 'wb') as f:
+                pickle.dump(self.preprocessor, f)
+
+            logger.info("Preprocessed data have been saved!")
 
         self.metadata = self.preprocessor.metadata
         dataflow = TGANDataFlow(data, self.metadata)
@@ -922,6 +958,12 @@ class DATGAN:
             ValueError
 
         """
+        logger.info("Loading Preprocessor!")
+        # Load preprocessor
+        with open(os.path.join(self.data_dir, 'preprocessor.pkl'), 'rb') as f:
+            self.preprocessor = pickle.load(f)
+        self.metadata = self.preprocessor.metadata
+
         max_iters = (num_samples // self.batch_size)
 
         results = []

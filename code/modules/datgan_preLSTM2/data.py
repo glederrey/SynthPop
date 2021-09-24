@@ -257,7 +257,7 @@ class MultiModalNumberTransformer:
         stds = np.sqrt(model.covariances_).reshape((1, self.max_clusters))
 
         # Fix this shitty normalization
-        normalized_values  = ((data - means) / (4 * stds))[:, valid_component_indicator]
+        normalized_values = ((data - means) / (4 * stds))[:, valid_component_indicator]
         probs = model.predict_proba(data)[:, valid_component_indicator]
 
         selected_component = np.zeros(len(data), dtype='int')
