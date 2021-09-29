@@ -439,14 +439,16 @@ class GraphBuilder(ModelDescBase):
             gaussian_components = col_info['n']
             with tf.variable_scope("%02d" % ptr):
                 h = FullyConnected('FC', output, self.num_gen_feature, nl=tf.tanh)
-                tmp_outputs.append(FullyConnected('FC2', h, 1, nl=tf.tanh))
-                tmp_input = tf.concat([h, z], axis=1)
+                w = FullyConnected('FC2', h, 1, nl=tf.tanh)
+                tmp_outputs.append(w)
+                tmp_input = h#FullyConnected('FC3', w, self.num_gen_feature, nl=tf.identity)
                 attw = tf.get_variable("attw", shape=(len(prev_states), 1, 1))
                 attw = tf.nn.softmax(attw, axis=0)
                 tmp_attention = tf.reduce_sum(tf.stack(prev_states, axis=0) * attw, axis=0)
 
             ptr += 1
 
+            tmp_input = tf.concat([tmp_input, z], axis=1)
             output, state = cell(tf.concat([tmp_input, tmp_attention], axis=1), state)
             prev_states.append(state[1])
             tmp_states.append(state)
@@ -472,8 +474,7 @@ class GraphBuilder(ModelDescBase):
                 w = FullyConnected('FC2', h, col_info['n'], nl=tf.nn.softmax)
                 tmp_outputs.append(w)
                 one_hot = tf.one_hot(tf.argmax(w, axis=1), col_info['n'])
-                tmp_input = FullyConnected(
-                    'FC3', one_hot, self.num_gen_feature, nl=tf.identity)
+                tmp_input = FullyConnected('FC3', one_hot, self.num_gen_feature, nl=tf.identity)
                 attw = tf.get_variable("attw", shape=(len(prev_states), 1, 1))
                 attw = tf.nn.softmax(attw, axis=0)
                 tmp_attention = tf.reduce_sum(tf.stack(prev_states, axis=0) * attw, axis=0)

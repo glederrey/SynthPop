@@ -8,7 +8,7 @@ import urllib
 
 import numpy as np
 import pandas as pd
-from sklearn.mixture import GaussianMixture
+from sklearn.mixture import GaussianMixture, BayesianGaussianMixture
 from sklearn.preprocessing import LabelEncoder
 from tensorpack import DataFlow, RNGDataFlow
 
@@ -238,6 +238,19 @@ class MultiModalNumberTransformer:
             sklearn.mixture.GaussianMixture.html
 
         """
+
+        """
+        model = BayesianGaussianMixture(
+            n_components=self.num_modes,
+            weight_concentration_prior_type='dirichlet_process',
+            weight_concentration_prior=0.001,
+            n_init=1,
+            max_iter=200,
+            #random_state=13
+        )
+        model.fit(data)
+        """
+
         model = GaussianMixture(self.num_modes)
         model.fit(data)
 

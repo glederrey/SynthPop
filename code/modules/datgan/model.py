@@ -16,15 +16,14 @@ import tarfile
 
 import numpy as np
 import tensorflow as tf
-from tensorpack import (
-    BatchData, BatchNorm, Dropout, FullyConnected, InputDesc, ModelDescBase, ModelSaver,
+from tensorpack import (BatchData, BatchNorm, Dropout, FullyConnected, InputDesc, ModelDescBase, ModelSaver,
     PredictConfig, QueueInput, SaverRestore, SimpleDatasetPredictor, logger)
 from tensorpack.tfutils.scope_utils import auto_reuse_variable_scope
 from tensorpack.tfutils.summary import add_moving_summary
 from tensorpack.utils.argtools import memoized
 
-from modules.datgan_preLSTM2.data import Preprocessor, RandomZData, TGANDataFlow
-from modules.datgan_preLSTM2.trainer import GANTrainer
+from modules.datgan.data import Preprocessor, RandomZData, DATGANDataFlow
+from modules.datgan.trainer import GANTrainer
 
 import networkx as nx
 
@@ -41,7 +40,8 @@ TUNABLE_VARIABLES = {
 
 
 class GraphBuilder(ModelDescBase):
-    """Main model for DATGAN.
+    """
+    Main model for DATGAN.
 
     Args:
         None
@@ -64,7 +64,9 @@ class GraphBuilder(ModelDescBase):
         num_dis_layers=1,
         num_dis_hidden=100,
         optimizer='AdamOptimizer',
-        training=True
+        training=True,
+        old_encoding=None,
+        structure=None
     ):
         """Initialize the object, set arguments as attributes."""
         self.metadata = metadata
@@ -80,9 +82,15 @@ class GraphBuilder(ModelDescBase):
         self.num_dis_hidden = num_dis_hidden
         self.optimizer = optimizer
         self.training = training
+        self.old_encoding = old_encoding
+        self.structure = structure
+
+        if structure not in ["TGAN", "simple", "complex"]:
+            raise ValueError("Wrong value for variable named 'structure'!")
 
     def collect_variables(self, g_scope='gen', d_scope='discrim'):
-        """Assign generator and discriminator variables from their scopes.
+        """
+        Assign generator and discriminator variables from their scopes.
 
         Args:
             g_scope(str): Scope for the generator.
@@ -99,7 +107,8 @@ class GraphBuilder(ModelDescBase):
             raise ValueError('There are no variables defined in some of the given scopes')
 
     def build_losses(self, logits_real, logits_fake, extra_g=0, l2_norm=0.00001):
-        r"""D and G play two-player minimax game with value function :math:`V(G,D)`.
+        r"""
+        D and G play two-player minimax game with value function :math:`V(G,D)`.
 
         .. math::
 
@@ -184,24 +193,34 @@ class GraphBuilder(ModelDescBase):
         for col in self.metadata['details'].keys():
             col_info = self.metadata['details'][col]
             if col_info['type'] == 'continuous':
-                gaussian_components = col_info['n']
                 inputs.append(
                     InputDesc(tf.float32,
                               (self.batch_size, 1),
                               'input_{}_value'.format(col))
                 )
 
-                inputs.append(
-                    InputDesc(tf.float32,
-                              (self.batch_size, gaussian_components),
-                              'input_{}_cluster'.format(col)
-                              )
-                )
+                if self.old_encoding:
+                    gaussian_components = col_info['n']
+
+                    inputs.append(
+                        InputDesc(tf.float32,
+                                  (self.batch_size, gaussian_components),
+                                  'input_{}_cluster'.format(col)
+                                  )
+                    )
+                else:
+                    inputs.append(
+                        InputDesc(tf.int32,
+                                  (self.batch_size, 1),
+                                  'input_{}_cluster'.format(col)
+                                  )
+                    )
 
             elif col_info['type'] == 'category':
-                inputs.append(InputDesc(tf.int32,
-                                        (self.batch_size, 1),
-                                        'input_{}'.format(col))
+                inputs.append(
+                    InputDesc(tf.int32,
+                              (self.batch_size, 1),
+                              'input_{}'.format(col))
                               )
 
             else:
@@ -296,7 +315,7 @@ class GraphBuilder(ModelDescBase):
 
             # Go through all variables
             for col_id, col in enumerate(self.metadata['details'].keys()):
-                print("\033[91m-> Creating cell for {} (in-edges: {})".format(col, len(in_edges[col])))
+                logger.info("\033[91mCreating cell for {} (in-edges: {})".format(col, len(in_edges[col])))
 
                 # Get info
                 col_info = self.metadata['details'][col]
@@ -437,14 +456,19 @@ class GraphBuilder(ModelDescBase):
 
             with tf.variable_scope("%02d" % ptr):
                 h = FullyConnected('FC', output, self.num_gen_feature, nl=tf.tanh)
-                tmp_outputs.append(FullyConnected('FC2', h, 1, nl=tf.tanh))
-                tmp_input = tf.concat([h, z], axis=1)
+                w = FullyConnected('FC2', h, 1, nl=tf.tanh)
+                tmp_outputs.append(w)
+                if self.structure in ["TGAN", "simple"]:
+                    tmp_input = h
+                else:
+                    tmp_input = FullyConnected('FC3', w, self.num_gen_feature, nl=tf.identity)
                 attw = tf.get_variable("attw", shape=(len(prev_states), 1, 1))
                 attw = tf.nn.softmax(attw, axis=0)
                 tmp_attention = tf.reduce_sum(tf.stack(prev_states, axis=0) * attw, axis=0)
 
             ptr += 1
 
+            tmp_input = tf.concat([tmp_input, z], axis=1)
             output, state = cell(tf.concat([tmp_input, tmp_attention], axis=1), state)
             prev_states.append(state[1])
             tmp_states.append(state)
@@ -453,9 +477,17 @@ class GraphBuilder(ModelDescBase):
                 h = FullyConnected('FC', output, self.num_gen_feature, nl=tf.tanh)
                 w = FullyConnected('FC2', h, col_info['n'], nl=tf.nn.softmax)
                 tmp_outputs.append(w)
-                one_hot = tf.one_hot(tf.argmax(w, axis=1), col_info['n'])
-                tmp_input = FullyConnected(
-                    'FC3', one_hot, self.num_gen_feature, nl=tf.identity)
+
+                if self.structure in ["simple"]:
+                    tmp_input = h
+                else:
+                    if self.old_encoding:
+                        tmp_input = FullyConnected('FC3', w, self.num_gen_feature, nl=tf.identity)
+                    else:
+                        one_hot = tf.one_hot(tf.argmax(w, axis=1), col_info['n'])
+                        # TGAN passes probabilities (w) instead of one_hot here
+                        tmp_input = FullyConnected('FC3', one_hot, self.num_gen_feature, nl=tf.identity)
+
                 attw = tf.get_variable("attw", shape=(len(prev_states), 1, 1))
                 attw = tf.nn.softmax(attw, axis=0)
                 tmp_attention = tf.reduce_sum(tf.stack(prev_states, axis=0) * attw, axis=0)
@@ -471,9 +503,13 @@ class GraphBuilder(ModelDescBase):
                 h = FullyConnected('FC', output, self.num_gen_feature, nl=tf.tanh)
                 w = FullyConnected('FC2', h, col_info['n'], nl=tf.nn.softmax)
                 tmp_outputs.append(w)
-                one_hot = tf.one_hot(tf.argmax(w, axis=1), col_info['n'])
-                tmp_input = FullyConnected(
-                    'FC3', one_hot, self.num_gen_feature, nl=tf.identity)
+
+                if self.structure in ["simple"]:
+                    tmp_input = h
+                else:
+                    one_hot = tf.one_hot(tf.argmax(w, axis=1), col_info['n'])
+                    tmp_input = FullyConnected('FC3', one_hot, self.num_gen_feature, nl=tf.identity)
+
                 attw = tf.get_variable("attw", shape=(len(prev_states), 1, 1))
                 attw = tf.nn.softmax(attw, axis=0)
                 tmp_attention = tf.reduce_sum(tf.stack(prev_states, axis=0) * attw, axis=0)
@@ -641,7 +677,13 @@ class GraphBuilder(ModelDescBase):
                 elif col_info['type'] == 'continuous':
                     vecs_denorm.append(vecs_gen[ptr])
                     ptr += 1
-                    vecs_denorm.append(vecs_gen[ptr])
+
+                    if self.old_encoding:
+                        vecs_denorm.append(vecs_gen[ptr])
+                    else:
+                        t = tf.argmax(vecs_gen[ptr], axis=1)
+                        t = tf.cast(tf.reshape(t, [-1, 1]), 'float32')
+                        vecs_denorm.append(t)
                     ptr += 1
 
                 else:
@@ -672,9 +714,23 @@ class GraphBuilder(ModelDescBase):
                 ptr += 1
 
             elif col_info['type'] == 'continuous':
+                # continuous value in the mixture
                 vecs_pos.append(inputs[ptr])
                 ptr += 1
-                vecs_pos.append(inputs[ptr])
+
+                if self.old_encoding:
+                    vecs_pos.append(inputs[ptr])
+                else:
+                    # one-hot encoding for the mixture
+                    one_hot = tf.one_hot(tf.cast(tf.reshape(inputs[ptr], [-1]), tf.int32), col_info['n'])
+                    noise_input = one_hot
+
+                    if self.training:
+                        noise = tf.random_uniform(tf.shape(one_hot), minval=0, maxval=self.noise)
+                        noise_input = (one_hot + noise) / tf.reduce_sum(
+                            one_hot + noise, keepdims=True, axis=1)
+
+                    vecs_pos.append(noise_input)
                 ptr += 1
 
             else:
@@ -683,7 +739,7 @@ class GraphBuilder(ModelDescBase):
                     "`continuous`. Instead it was {}.".format(col_id, col_info['type'])
                 )
 
-        KL = 0.
+        KL = 0.0
         ptr = 0
         if self.training:
             # Go through all variables
@@ -704,6 +760,7 @@ class GraphBuilder(ModelDescBase):
                     ptr += 1
                     dist = tf.reduce_sum(vecs_gen[ptr], axis=0)
                     dist = dist / tf.reduce_sum(dist)
+
                     real = tf.reduce_sum(vecs_pos[ptr], axis=0)
                     real = real / tf.reduce_sum(real)
                     KL += self.compute_kl(real, dist)
@@ -806,6 +863,11 @@ class DATGAN:
         self.num_dis_hidden = num_dis_hidden
         self.optimizer = optimizer
 
+        # DATGAN parameters for tests
+        self.old_encoding = True
+        # Can be TGAN, simple or complex
+        self.structure = "complex"
+
         if gpu:
             os.environ['CUDA_VISIBLE_DEVICES'] = gpu
 
@@ -826,27 +888,9 @@ class DATGAN:
             num_dis_layers=self.num_dis_layers,
             num_dis_hidden=self.num_dis_hidden,
             optimizer=self.optimizer,
-            training=training
-        )
-
-    def prepare_sampling(self):
-        """Prepare model for generate samples."""
-        if self.model is None:
-            self.model = self.get_model(training=False)
-
-        else:
-            self.model.training = False
-
-        predict_config = PredictConfig(
-            session_init=SaverRestore(self.restore_path),
-            model=self.model,
-            input_names=['z'],
-            output_names=['gen/gen', 'z'],
-        )
-
-        self.simple_dataset_predictor = SimpleDatasetPredictor(
-            predict_config,
-            RandomZData((self.batch_size, self.z_dim))
+            training=training,
+            old_encoding=self.old_encoding,
+            structure=self.structure
         )
 
     def fit(self, data, dag):
@@ -860,8 +904,8 @@ class DATGAN:
             None
 
         """
-        self.restore_path = os.path.join(self.model_dir, 'checkpoint')
         self.preprocessor = None
+        self.restore_path = os.path.join(self.model_dir, 'checkpoint')
 
         # Verify that the DAG has the same number of nodes as the number of variables in the data
         # and that it's indeed a DAG.
@@ -869,12 +913,8 @@ class DATGAN:
         self.verify_dag(data)
         self.var_order = self.get_order_variables()
 
-        if os.path.isfile(self.restore_path) and self.restore_session:
-            logger.info("Found an already existing model. Loading it!")
-
-            session_init = SaverRestore(self.restore_path)
-            with open(os.path.join(self.log_dir, 'stats.json')) as f:
-                starting_epoch = json.load(f)[-1]['epoch_num'] + 1
+        if os.path.exists(self.data_dir):
+            logger.info("Found preprocessed data")
 
             # Load preprocessed data
             with open(os.path.join(self.data_dir, 'preprocessed_data.pkl'), 'rb') as f:
@@ -883,16 +923,12 @@ class DATGAN:
                 self.preprocessor = pickle.load(f)
 
             logger.info("Preprocessed data have been loaded!")
-
         else:
-            logger.info("No model found. Starting from scratch!")
-            session_init = None
-            starting_epoch = 1
-
             # Preprocessing steps
             logger.info("Preprocessing the data!")
 
             self.preprocessor = Preprocessor(continuous_columns=self.continuous_columns, columns_order=self.var_order)
+            self.preprocessor.continous_transformer.old_encoding = self.old_encoding
             data = self.preprocessor.fit_transform(data)
 
             # Save the preprocessor and the data
@@ -906,7 +942,7 @@ class DATGAN:
             logger.info("Preprocessed data have been saved!")
 
         self.metadata = self.preprocessor.metadata
-        dataflow = TGANDataFlow(data, self.metadata)
+        dataflow = DATGANDataFlow(data, self.metadata)
         batch_data = BatchData(dataflow, self.batch_size)
         input_queue = QueueInput(batch_data)
 
@@ -917,16 +953,15 @@ class DATGAN:
             input_queue=input_queue,
         )
 
-        self.restore_path = os.path.join(self.model_dir, 'checkpoint')
-
+        # Checking if previous training already exists
+        session_init = None
+        starting_epoch = 1
         if os.path.isfile(self.restore_path) and self.restore_session:
+            logger.info("Found an already existing model. Loading it!")
+
             session_init = SaverRestore(self.restore_path)
             with open(os.path.join(self.log_dir, 'stats.json')) as f:
                 starting_epoch = json.load(f)[-1]['epoch_num'] + 1
-
-        else:
-            session_init = None
-            starting_epoch = 1
 
         action = 'k' if self.restore_session else None
         logger.set_logger_dir(self.log_dir, action=action)
@@ -944,6 +979,26 @@ class DATGAN:
         )
 
         self.prepare_sampling()
+
+    def prepare_sampling(self):
+        """Prepare model to generate samples."""
+        if self.model is None:
+            self.model = self.get_model(training=False)
+
+        else:
+            self.model.training = False
+
+        predict_config = PredictConfig(
+            session_init=SaverRestore(self.restore_path),
+            model=self.model,
+            input_names=['z'],
+            output_names=['gen/gen', 'z'],
+        )
+
+        self.simple_dataset_predictor = SimpleDatasetPredictor(
+            predict_config,
+            RandomZData((self.batch_size, self.z_dim))
+        )
 
     def sample(self, num_samples):
         """Generate samples from model.
@@ -985,11 +1040,17 @@ class DATGAN:
                 ptr += 1
 
             elif col_info['type'] == 'continuous':
-                gaussian_components = col_info['n']
+
                 val = results[:, ptr:ptr + 1]
                 ptr += 1
-                pro = results[:, ptr:ptr + gaussian_components]
-                ptr += gaussian_components
+
+                if self.old_encoding:
+                    gaussian_components = col_info['n']
+                    pro = results[:, ptr:ptr + gaussian_components]
+                    ptr += gaussian_components
+                else:
+                    pro = results[:, ptr:ptr + 1]
+                    ptr += 1
                 features[col] = np.concatenate([val, pro], axis=1)
 
             else:
@@ -1120,4 +1181,3 @@ class DATGAN:
                     to_treat.append(edge[1])
 
         return treated
-

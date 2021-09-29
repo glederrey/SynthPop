@@ -5,7 +5,6 @@ from tensorpack import StagingInput, TowerTrainer
 from tensorpack.graph_builder import DataParallelBuilder, LeastLoadedDeviceSetter
 from tensorpack.tfutils.tower import TowerContext, TowerFuncWrapper
 
-
 class GANTrainer(TowerTrainer):
     """GanTrainer model.
 
@@ -102,7 +101,8 @@ class SeparateGANTrainer(TowerTrainer):
 
 
 class MultiGPUGANTrainer(TowerTrainer):
-    """A replacement of GANTrainer (optimize d and g one by one) with multi-gpu support.
+    """
+    A replacement of GANTrainer (optimize d and g one by one) with multi-gpu support.
 
     Args:
         nr_gpu(int):

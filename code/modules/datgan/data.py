@@ -8,7 +8,7 @@ import urllib
 
 import numpy as np
 import pandas as pd
-from sklearn.mixture import BayesianGaussianMixture
+from sklearn.mixture import BayesianGaussianMixture, GaussianMixture
 from sklearn.preprocessing import LabelEncoder
 from tensorpack import DataFlow, RNGDataFlow
 
@@ -66,7 +66,7 @@ def check_inputs(function):
     return decorated
 
 
-class TGANDataFlow(RNGDataFlow):
+class DATGANDataFlow(RNGDataFlow):
     """Subclass of :class:`tensorpack.RNGDataFlow` prepared to work with :class:`numpy.ndarray`.
 
     Attributes:
@@ -95,6 +95,7 @@ class TGANDataFlow(RNGDataFlow):
 
         self.metadata = metadata
         self.num_features = self.metadata['num_features']
+        old_encoding = self.metadata['old_encoding']
 
         self.data = []
         self.distribution = []
@@ -105,8 +106,12 @@ class TGANDataFlow(RNGDataFlow):
                 col_data = data[col]
                 value = col_data[:, :1]
                 cluster = col_data[:, 1:]
+
                 self.data.append(value)
-                self.data.append(cluster)
+                if old_encoding:
+                    self.data.append(cluster)
+                else:
+                    self.data.append(np.asarray(cluster, dtype='int32'))
 
             elif column_info['type'] == 'category':
                 col_data = np.asarray(data[col], dtype='int32')
@@ -220,10 +225,13 @@ class MultiModalNumberTransformer:
 
     """
 
-    def __init__(self, max_clusters=10, weight_threshold=0.005):
+    def __init__(self):
         """Initialize instance."""
-        self.max_clusters = max_clusters
-        self.weight_threshold = weight_threshold
+        self.max_clusters = 5
+        self.weight_threshold = 0.005
+        self.std_span = 2
+        self.bayesian = False
+        self.old_encoding = True
 
     @check_inputs
     def transform(self, data):
@@ -240,42 +248,55 @@ class MultiModalNumberTransformer:
             sklearn.mixture.BayesianGaussianMixture.html
 
         """
-        model = BayesianGaussianMixture(
-            self.max_clusters,
-            weight_concentration_prior_type='dirichlet_process',
-            weight_concentration_prior=0.001,
-            n_init=1,
-            #random_state=13
-        )
-        model.fit(data)
 
-        valid_component_indicator  = model.weights_ > self.weight_threshold
+        if self.bayesian:
+            model = BayesianGaussianMixture(
+                n_components=self.max_clusters,
+                weight_concentration_prior_type='dirichlet_process',
+                weight_concentration_prior=0.001,
+                n_init=1,
+                max_iter=200,
+                #random_state=13
+            )
+            model.fit(data)
 
-        num_components = valid_component_indicator.sum()
+            valid_component_indicator = model.weights_ > self.weight_threshold
+        else:
+            model = GaussianMixture(self.max_clusters)
+            model.fit(data)
+
+            valid_component_indicator = np.array([True]*self.max_clusters)
 
         means = model.means_.reshape((1, self.max_clusters))
         stds = np.sqrt(model.covariances_).reshape((1, self.max_clusters))
 
         # Fix this shitty normalization
-        normalized_values = ((data - means) / (4 * stds))[:, valid_component_indicator]
+        normalized_values = ((data - means) / (self.std_span * stds))[:, valid_component_indicator]
         probs = model.predict_proba(data)[:, valid_component_indicator]
 
+        """ Instead of argmax...
         selected_component = np.zeros(len(data), dtype='int')
         for i in range(len(data)):
             component_prob_t = probs[i] + 1e-6
             component_prob_t = component_prob_t / component_prob_t.sum()
             selected_component[i] = np.random.choice(
                 np.arange(num_components), p=component_prob_t)
+        """
+        selected_component = np.argmax(probs, axis=1)
 
         selected_normalized_value = normalized_values[
             np.arange(len(data)), selected_component].reshape([-1, 1])
         # Then remove clips?
         selected_normalized_value = np.clip(selected_normalized_value, -.99, .99)
 
-        selected_component_onehot = np.zeros_like(probs)
-        selected_component_onehot[np.arange(len(data)), selected_component] = 1
+        #selected_component_onehot = np.zeros_like(probs)
+        #selected_component_onehot[np.arange(len(data)), selected_component] = 1
 
-        return selected_normalized_value, selected_component_onehot, model, valid_component_indicator
+        if self.old_encoding:
+            return selected_normalized_value, probs, model, valid_component_indicator
+        else:
+            return selected_normalized_value, selected_component, model, valid_component_indicator
+
 
     #@staticmethod
     def inverse_transform(self, data, info):
@@ -289,11 +310,13 @@ class MultiModalNumberTransformer:
            numpy.ndarray: Values in the original space.
 
         """
+
+        """ Previous way of doing it
         gmm = info['transform']
         valid_component_indicator = info['transform_aux']
 
         selected_normalized_value = data[:, 0]
-        selected_component_probs = data[:, 1:]
+        selected_component_probs = data[:, 1]
 
         selected_normalized_value = np.clip(selected_normalized_value, -1, 1)
         component_probs = np.zeros((len(data), self.max_clusters))
@@ -308,6 +331,26 @@ class MultiModalNumberTransformer:
         std_t = stds[selected_component]
 
         return selected_normalized_value * 4 * std_t + mean_t
+        """
+
+        gmm = info['transform']
+        valid_component_indicator = info['transform_aux']
+
+        selected_normalized_value = data[:, 0]
+        if self.old_encoding:
+            probs = data[:, 1:]
+            selected_component = np.argmax(probs, axis=1)
+
+        else:
+            selected_component = data[:, 1].astype(np.int32)
+
+        means = gmm.means_.reshape([-1])[valid_component_indicator]
+        stds = np.sqrt(gmm.covariances_).reshape([-1])[valid_component_indicator]
+
+        mean_t = means[selected_component]
+        std_t = stds[selected_component]
+
+        return selected_normalized_value * self.std_span * std_t + mean_t
 
 
 class Preprocessor:
@@ -361,15 +404,24 @@ class Preprocessor:
             if col in self.continuous_columns:
                 column_data = data[col].values.reshape([-1, 1])
                 features, probs, model, valid_comp_ind = self.continous_transformer.transform(column_data)
-                transformed_data[col] = np.concatenate((features, probs), axis=1)
+                if self.continous_transformer.old_encoding:
+                    transformed_data[col] = np.concatenate((features, probs), axis=1)
+                else:
+                    # Transform probs the same way as with categorical features
+                    probs = self.categorical_transformer.fit_transform(probs)
+                    transformed_data[col] = np.concatenate((features, probs.reshape([-1, 1])), axis=1)
 
                 if fitting:
                     details[col] = {
                         "type": "continuous",
-                        "n": len(probs[0]),
+                        "n": valid_comp_ind.sum(),
                         "transform": model,
                         "transform_aux": valid_comp_ind
                     }
+
+                    if not self.continous_transformer.old_encoding:
+                        mapping = self.categorical_transformer.classes_
+                        details[col]["mapping"] = mapping
 
             else:
                 column_data = data[col].astype(str).values
@@ -387,7 +439,8 @@ class Preprocessor:
         if fitting:
             metadata = {
                 "num_features": num_cols,
-                "details": details
+                "details": details,
+                "old_encoding": self.continous_transformer.old_encoding
             }
             check_metadata(metadata)
             self.metadata = metadata
@@ -413,7 +466,7 @@ class Preprocessor:
         self.fit_transform(data)
 
     def reverse_transform(self, data):
-        """Transform TGAN numerical features back into human-readable data.
+        """Transform DATGAN numerical features back into human-readable data.
 
         Args:
             data(pandas.DataFrame): Data to transform.
