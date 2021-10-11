@@ -103,7 +103,7 @@ class DATGAN:
         self.optimizer = optimizer
 
         # DATGAN parameters for continuous variable
-        self.one_hot = True
+        self.simulating = True
         self.encoding = 'DATGAN'
         self.std_span = 2
         self.max_clusters = 10
@@ -131,7 +131,7 @@ class DATGAN:
             num_dis_hidden=self.num_dis_hidden,
             optimizer=self.optimizer,
             training=training,
-            one_hot=self.one_hot,
+            simulating=self.simulating,
             structure=self.structure
         )
 
@@ -173,14 +173,14 @@ class DATGAN:
             logger.info("Preprocessing the data!")
 
             self.preprocessor = Preprocessor(continuous_columns=self.continuous_columns, columns_order=self.var_order)
-            self.preprocessor.set_inputs(self.max_clusters, self.std_span, self.encoding, self.one_hot)
+            self.preprocessor.set_inputs(self.max_clusters, self.std_span, self.encoding, self.simulating)
             transformed_data = self.preprocessor.fit_transform(data)
 
             # Save the preprocessor and the data
             if not os.path.exists(self.data_dir):
                 os.makedirs(self.data_dir, exist_ok=True)
             with open(os.path.join(self.data_dir, 'preprocessed_data.pkl'), 'wb') as f:
-                pickle.dump(data, f)
+                pickle.dump(transformed_data, f)
             with open(os.path.join(self.data_dir, 'preprocessor.pkl'), 'wb') as f:
                 pickle.dump(self.preprocessor, f)
 
@@ -292,13 +292,9 @@ class DATGAN:
                 val = results[:, ptr:ptr + 1]
                 ptr += 1
 
-                if self.one_hot:
-                    pro = results[:, ptr:ptr + 1]
-                    ptr += 1
-                else:
-                    gaussian_components = col_info['n']
-                    pro = results[:, ptr:ptr + gaussian_components]
-                    ptr += gaussian_components
+                gaussian_components = col_info['n']
+                pro = results[:, ptr:ptr + gaussian_components]
+                ptr += gaussian_components
 
                 features[col] = np.concatenate([val, pro], axis=1)
 

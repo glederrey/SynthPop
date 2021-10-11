@@ -36,7 +36,7 @@ class GraphBuilder(ModelDescBase):
         num_dis_hidden=100,
         optimizer='AdamOptimizer',
         training=True,
-        one_hot=None,
+        simulating=None,
         structure=None
     ):
         """Initialize the object, set arguments as attributes."""
@@ -53,7 +53,7 @@ class GraphBuilder(ModelDescBase):
         self.num_dis_hidden = num_dis_hidden
         self.optimizer = optimizer
         self.training = training
-        self.one_hot = one_hot
+        self.simulating = simulating
         self.structure = structure
 
         if structure not in ["TGAN", "simple", "complex"]:
@@ -170,22 +170,13 @@ class GraphBuilder(ModelDescBase):
                               'input_{}_value'.format(col))
                 )
 
-                if self.one_hot:
-                    inputs.append(
-                        InputDesc(tf.int32,
-                                  (self.batch_size, 1),
-                                  'input_{}_cluster'.format(col)
-                                  )
-                    )
-                else:
-                    gaussian_components = col_info['n']
-
-                    inputs.append(
-                        InputDesc(tf.float32,
-                                  (self.batch_size, gaussian_components),
-                                  'input_{}_cluster'.format(col)
-                                  )
-                    )
+                gaussian_components = col_info['n']
+                inputs.append(
+                    InputDesc(tf.float32,
+                              (self.batch_size, gaussian_components),
+                              'input_{}_cluster'.format(col)
+                              )
+                )
 
             elif col_info['type'] == 'category':
                 inputs.append(
@@ -447,12 +438,7 @@ class GraphBuilder(ModelDescBase):
                 w = FullyConnected('FC2', h, col_info['n'], nl=tf.nn.softmax)
                 tmp_outputs.append(w)
 
-                if self.one_hot:
-                    one_hot = tf.one_hot(tf.argmax(w, axis=1), col_info['n'])
-                    # TGAN passes probabilities (w) instead of one_hot here
-                    tmp_input = FullyConnected('FC3', one_hot, self.num_gen_feature, nl=tf.identity)
-                else:
-                    tmp_input = FullyConnected('FC3', w, self.num_gen_feature, nl=tf.identity)
+                tmp_input = FullyConnected('FC3', w, self.num_gen_feature, nl=tf.identity)
 
                 attw = tf.get_variable("attw", shape=(len(prev_states), 1, 1))
                 attw = tf.nn.softmax(attw, axis=0)
@@ -470,7 +456,15 @@ class GraphBuilder(ModelDescBase):
                 w = FullyConnected('FC2', h, col_info['n'], nl=tf.nn.softmax)
                 tmp_outputs.append(w)
 
-                one_hot = tf.one_hot(tf.argmax(w, axis=1), col_info['n'])
+                """
+                if self.simulating:
+                    res_tensor = tf.reshape(tf.random.categorical(tf.math.log(w), 1), [-1])
+                else:
+                    res_tensor = tf.argmax(w, axis=1)
+                """
+                res_tensor = tf.argmax(w, axis=1)
+
+                one_hot = tf.one_hot(res_tensor, col_info['n'])
                 tmp_input = FullyConnected('FC3', one_hot, self.num_gen_feature, nl=tf.identity)
 
                 attw = tf.get_variable("attw", shape=(len(prev_states), 1, 1))
@@ -632,7 +626,15 @@ class GraphBuilder(ModelDescBase):
                 col_info = self.metadata['details'][col]
 
                 if col_info['type'] == 'category':
+
+                    """
+                    if self.simulating:
+                        t = tf.reshape(tf.random.categorical(tf.math.log(vecs_gen[ptr]), 1), [-1])
+                    else:
+                        t = tf.argmax(vecs_gen[ptr], axis=1)
+                    """
                     t = tf.argmax(vecs_gen[ptr], axis=1)
+
                     t = tf.cast(tf.reshape(t, [-1, 1]), 'float32')
                     vecs_denorm.append(t)
                     ptr += 1
@@ -641,13 +643,7 @@ class GraphBuilder(ModelDescBase):
                     vecs_denorm.append(vecs_gen[ptr])
                     ptr += 1
 
-                    if self.one_hot:
-                        t = tf.argmax(vecs_gen[ptr], axis=1)
-                        t = tf.cast(tf.reshape(t, [-1, 1]), 'float32')
-                        vecs_denorm.append(t)
-                    else:
-                        vecs_denorm.append(vecs_gen[ptr])
-
+                    vecs_denorm.append(vecs_gen[ptr])
                     ptr += 1
 
                 else:
@@ -656,7 +652,8 @@ class GraphBuilder(ModelDescBase):
                         "`continuous`. Instead it was {}.".format(col_id, col_info['type'])
                     )
 
-            a = tf.identity(tf.concat(vecs_denorm, axis=1), name='gen')
+            # This weird thing is then used for sampling the generator once it has been trained.
+            tf.identity(tf.concat(vecs_denorm, axis=1), name='gen')
 
         vecs_pos = []
         ptr = 0
@@ -682,20 +679,7 @@ class GraphBuilder(ModelDescBase):
                 vecs_pos.append(inputs[ptr])
                 ptr += 1
 
-                if self.one_hot:
-                    # one-hot encoding for the mixture
-                    one_hot = tf.one_hot(tf.cast(tf.reshape(inputs[ptr], [-1]), tf.int32), col_info['n'])
-                    noise_input = one_hot
-
-                    if self.training:
-                        noise = tf.random_uniform(tf.shape(one_hot), minval=0, maxval=self.noise)
-                        noise_input = (one_hot + noise) / tf.reduce_sum(
-                            one_hot + noise, keepdims=True, axis=1)
-
-                    vecs_pos.append(noise_input)
-                else:
-                    vecs_pos.append(inputs[ptr])
-
+                vecs_pos.append(inputs[ptr])
                 ptr += 1
 
             else:

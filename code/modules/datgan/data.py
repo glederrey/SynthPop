@@ -97,7 +97,6 @@ class DATGANDataFlow(RNGDataFlow):
 
         self.metadata = metadata
         self.num_features = self.metadata['num_features']
-        one_hot = self.metadata['one_hot']
 
         self.data = []
         self.distribution = []
@@ -110,10 +109,7 @@ class DATGANDataFlow(RNGDataFlow):
                 cluster = col_data[:, 1:]
 
                 self.data.append(value)
-                if one_hot:
-                    self.data.append(np.asarray(cluster, dtype='int32'))
-                else:
-                    self.data.append(cluster)
+                self.data.append(cluster)
 
             elif column_info['type'] == 'category':
                 col_data = np.asarray(data[col], dtype='int32')
@@ -233,13 +229,13 @@ class MultiModalNumberTransformer:
         self.std_span = 2
         # encoding can be 'TGAN', 'CTGAN' or 'DATGAN'
         self.encoding = 'DATGAN'
-        self.one_hot = True
+        self.simulating = False
 
-    def set_inputs(self, max_clusters, std_span, encoding, one_hot):
+    def set_inputs(self, max_clusters, std_span, encoding, simulating):
         self.max_clusters = max_clusters
         self.std_span = std_span
         self.encoding = encoding
-        self.one_hot = one_hot
+        self.simulating = simulating
 
     @check_inputs
     def transform(self, data):
@@ -332,28 +328,22 @@ class MultiModalNumberTransformer:
         normalized_values = ((data - means) / (self.std_span * stds))[:, valid_component_indicator]
         probs = model.predict_proba(data)[:, valid_component_indicator]
 
-        """ Instead of argmax...
-        selected_component = np.zeros(len(data), dtype='int')
-        for i in range(len(data)):
-            component_prob_t = probs[i] + 1e-6
-            component_prob_t = component_prob_t / component_prob_t.sum()
-            selected_component[i] = np.random.choice(
-                np.arange(num_components), p=component_prob_t)
-        """
-        selected_component = np.argmax(probs, axis=1)
+        if self.simulating:
+            selected_component = np.zeros(len(data), dtype='int')
+            for i in range(len(data)):
+                component_prob_t = probs[i] + 1e-6
+                component_prob_t = component_prob_t / component_prob_t.sum()
+                selected_component[i] = np.random.choice(
+                    np.arange(n_modes), p=component_prob_t)
+        else:
+            selected_component = np.argmax(probs, axis=1)
 
         selected_normalized_value = normalized_values[
             np.arange(len(data)), selected_component].reshape([-1, 1])
         # Then remove clips?
         selected_normalized_value = np.clip(selected_normalized_value, -.99, .99)
 
-        #selected_component_onehot = np.zeros_like(probs)
-        #selected_component_onehot[np.arange(len(data)), selected_component] = 1
-
-        if self.one_hot:
-            return selected_normalized_value, selected_component, model, valid_component_indicator
-        else:
-            return selected_normalized_value, probs, model, valid_component_indicator
+        return selected_normalized_value, probs, model, valid_component_indicator
 
     #@staticmethod
     def inverse_transform(self, data, info):
@@ -372,11 +362,18 @@ class MultiModalNumberTransformer:
         valid_component_indicator = info['transform_aux']
 
         selected_normalized_value = data[:, 0]
-        if self.one_hot:
-            selected_component = data[:, 1].astype(np.int32)
-        else:
-            probs = data[:, 1:]
+        probs = data[:, 1:]
 
+        n_modes = info['n']
+
+        if self.simulating:
+            selected_component = np.zeros(len(data), dtype='int')
+            for i in range(len(data)):
+                component_prob_t = probs[i] + 1e-6
+                component_prob_t = component_prob_t / component_prob_t.sum()
+                selected_component[i] = np.random.choice(
+                    np.arange(n_modes), p=component_prob_t)
+        else:
             selected_component = np.argmax(probs, axis=1)
 
         means = gmm.means_.reshape([-1])[valid_component_indicator]
@@ -419,8 +416,8 @@ class Preprocessor:
         self.categorical_transformer = LabelEncoder()
         self.columns = None
 
-    def set_inputs(self, max_clusters, std_span, encoding, one_hot):
-        self.continous_transformer.set_inputs(max_clusters, std_span, encoding, one_hot)
+    def set_inputs(self, max_clusters, std_span, encoding, simulating):
+        self.continous_transformer.set_inputs(max_clusters, std_span, encoding, simulating)
 
     def fit_transform(self, data, fitting=True):
         """Transform human-readable data into TGAN numerical features.
@@ -445,12 +442,7 @@ class Preprocessor:
 
                 column_data = data[col].values.reshape([-1, 1])
                 features, probs, model, valid_comp_ind = self.continous_transformer.transform(column_data)
-                if self.continous_transformer.one_hot:
-                    # Transform probs the same way as with categorical features
-                    probs = self.categorical_transformer.fit_transform(probs)
-                    transformed_data[col] = np.concatenate((features, probs.reshape([-1, 1])), axis=1)
-                else:
-                    transformed_data[col] = np.concatenate((features, probs), axis=1)
+                transformed_data[col] = np.concatenate((features, probs), axis=1)
 
                 if fitting:
                     details[col] = {
@@ -459,10 +451,6 @@ class Preprocessor:
                         "transform": model,
                         "transform_aux": valid_comp_ind
                     }
-
-                    if self.continous_transformer.one_hot:
-                        mapping = self.categorical_transformer.classes_
-                        details[col]["mapping"] = mapping
 
             else:
                 logger.info("Encoding categorical variable \"{}\"...".format(col))
@@ -483,7 +471,6 @@ class Preprocessor:
             metadata = {
                 "num_features": num_cols,
                 "details": details,
-                "one_hot": self.continous_transformer.one_hot
             }
             check_metadata(metadata)
             self.metadata = metadata
@@ -537,34 +524,3 @@ class Preprocessor:
         result = pd.DataFrame(dict(enumerate(table)))
         result.columns = self.columns
         return result
-
-
-def load_demo_data(name, header=None):
-    """Fetch, load and prepare a dataset.
-
-    If name is one of the demo datasets
-
-
-    Args:
-        name(str): Name or path of the dataset.
-        header(): Header parameter when executing :attr:`pandas.read_csv`
-
-    """
-    params = DEMO_DATASETS.get(name)
-    if params:
-        url, file_path, continuous_columns = params
-        if not os.path.isfile(file_path):
-            base_path = os.path.dirname(file_path)
-            if not os.path.exists(base_path):
-                os.makedirs(base_path)
-
-            urllib.request.urlretrieve(url, file_path)
-
-    else:
-        message = (
-            '{} is not a valid dataset name. '
-            'Supported values are: {}.'.format(name, list(DEMO_DATASETS.keys()))
-        )
-        raise ValueError(message)
-
-    return pd.read_csv(file_path, header=header), continuous_columns
