@@ -10,7 +10,8 @@ import numpy as np
 import pandas as pd
 from sklearn.mixture import BayesianGaussianMixture, GaussianMixture
 from sklearn.preprocessing import LabelEncoder
-from tensorpack import DataFlow, RNGDataFlow, logger
+from tensorpack import DataFlow, RNGDataFlow
+from tensorpack.utils import logger
 
 from modules.datgan_noonehot.pers_homology import Peak, get_persistent_homology
 
@@ -116,7 +117,7 @@ class DATGANDataFlow(RNGDataFlow):
                     self.data.append(cluster)
 
             elif column_info['type'] == 'category':
-                col_data = np.asarray(data[col], dtype='int32')
+                col_data = data[col]
                 self.data.append(col_data)
 
             else:
@@ -468,8 +469,12 @@ class Preprocessor:
                 logger.info("Encoding categorical variable \"{}\"...".format(col))
 
                 column_data = data[col].astype(str).values
-                features = self.categorical_transformer.fit_transform(column_data)
-                transformed_data[col] = features.reshape([-1, 1])
+                tmp = self.categorical_transformer.fit_transform(column_data)
+                features = np.zeros((len(tmp), len(np.unique(tmp))))
+                for i, val in enumerate(tmp):
+                    features[i, val] = 1
+
+                transformed_data[col] = features
 
                 if fitting:
                     mapping = self.categorical_transformer.classes_
@@ -529,8 +534,11 @@ class Preprocessor:
 
             if column_metadata['type'] == 'category':
                 self.categorical_transformer.classes_ = column_metadata['mapping']
+
+                selected_component = np.argmax(column_data, axis=1)
+
                 column = self.categorical_transformer.inverse_transform(
-                    column_data.ravel().astype(np.int32))
+                    selected_component.ravel().astype(np.int32))
 
             table.append(column)
 

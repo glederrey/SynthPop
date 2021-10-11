@@ -23,8 +23,8 @@ from tensorpack.tfutils.scope_utils import auto_reuse_variable_scope
 from tensorpack.tfutils.summary import add_moving_summary
 from tensorpack.utils.argtools import memoized
 
-from modules.datgan.data import Preprocessor, RandomZData, TGANDataFlow
-from modules.datgan.trainer import GANTrainer
+from modules.datgan_noonehot.data import Preprocessor, RandomZData, TGANDataFlow
+from modules.datgan_noonehot.trainer import GANTrainer
 
 import networkx as nx
 
