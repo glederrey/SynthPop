@@ -18,9 +18,9 @@ import numpy as np
 from tensorpack import BatchData, ModelSaver, PredictConfig, QueueInput, SaverRestore, SimpleDatasetPredictor
 from tensorpack.utils import logger
 
-from modules.datgan.data import Preprocessor, RandomZData, DATGANDataFlow
-from modules.datgan.trainer import GANTrainer
-from modules.datgan.graph import GraphBuilder
+from modules.datgan_vector.data import Preprocessor, RandomZData, DATGANDataFlow
+from modules.datgan_vector.trainer import GANTrainer
+from modules.datgan_vector.graph import GraphBuilder
 
 import networkx as nx
 

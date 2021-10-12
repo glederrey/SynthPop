@@ -13,7 +13,7 @@ from sklearn.preprocessing import LabelEncoder
 from tensorpack import DataFlow, RNGDataFlow
 from tensorpack.utils import logger
 
-from modules.datgan.pers_homology import Peak, get_persistent_homology
+from modules.datgan_scalar.pers_homology import Peak, get_persistent_homology
 
 DEMO_DATASETS = {
     'census': (
@@ -106,9 +106,8 @@ class DATGANDataFlow(RNGDataFlow):
             column_info = self.metadata['details'][col]
             if column_info['type'] == 'continuous':
                 col_data = data[col]
-                n = column_info['n']
-                value = col_data[:, :n]
-                cluster = col_data[:, n:]
+                value = col_data[:, :1]
+                cluster = col_data[:, 1:]
 
                 self.data.append(value)
                 self.data.append(cluster)
@@ -330,10 +329,22 @@ class MultiModalNumberTransformer:
         normalized_values = ((data - means) / (self.std_span * stds))[:, valid_component_indicator]
         probs = model.predict_proba(data)[:, valid_component_indicator]
 
-        # Clip the values
-        normalized_values = np.clip(normalized_values, -.99, .99)
+        if self.simulating:
+            selected_component = np.zeros(len(data), dtype='int')
+            for i in range(len(data)):
+                component_prob_t = probs[i] + 1e-6
+                component_prob_t = component_prob_t / component_prob_t.sum()
+                selected_component[i] = np.random.choice(
+                    np.arange(n_modes), p=component_prob_t)
+        else:
+            selected_component = np.argmax(probs, axis=1)
 
-        return normalized_values, probs, model, valid_component_indicator
+        selected_normalized_value = normalized_values[
+            np.arange(len(data)), selected_component].reshape([-1, 1])
+        # Then remove clips?
+        selected_normalized_value = np.clip(selected_normalized_value, -.99, .99)
+
+        return selected_normalized_value, probs, model, valid_component_indicator
 
     #@staticmethod
     def inverse_transform(self, data, info):
@@ -350,10 +361,11 @@ class MultiModalNumberTransformer:
 
         gmm = info['transform']
         valid_component_indicator = info['transform_aux']
-        n_modes = info['n']
 
-        normalized_values = data[:, :n_modes]
-        probs = data[:, n_modes:]
+        selected_normalized_value = data[:, 0]
+        probs = data[:, 1:]
+
+        n_modes = info['n']
 
         if self.simulating:
             selected_component = np.zeros(len(data), dtype='int')
@@ -370,9 +382,6 @@ class MultiModalNumberTransformer:
 
         mean_t = means[selected_component]
         std_t = stds[selected_component]
-
-        selected_normalized_value = normalized_values[
-            np.arange(len(data)), selected_component]
 
         return selected_normalized_value * self.std_span * std_t + mean_t
 

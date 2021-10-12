@@ -13,7 +13,7 @@ from sklearn.preprocessing import LabelEncoder
 from tensorpack import DataFlow, RNGDataFlow
 from tensorpack.utils import logger
 
-from modules.datgan.pers_homology import Peak, get_persistent_homology
+from modules.datgan_vector.pers_homology import Peak, get_persistent_homology
 
 DEMO_DATASETS = {
     'census': (

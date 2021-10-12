@@ -164,18 +164,16 @@ class GraphBuilder(ModelDescBase):
         for col in self.metadata['details'].keys():
             col_info = self.metadata['details'][col]
             if col_info['type'] == 'continuous':
-
-                n_modes = col_info['n']
-
                 inputs.append(
                     InputDesc(tf.float32,
-                              (self.batch_size, n_modes),
+                              (self.batch_size, 1),
                               'input_{}_value'.format(col))
                 )
 
+                gaussian_components = col_info['n']
                 inputs.append(
                     InputDesc(tf.float32,
-                              (self.batch_size, n_modes),
+                              (self.batch_size, gaussian_components),
                               'input_{}_cluster'.format(col)
                               )
                 )
@@ -420,15 +418,28 @@ class GraphBuilder(ModelDescBase):
 
             with tf.variable_scope("%02d" % ptr):
                 h = FullyConnected('FC', output, self.num_gen_feature, nl=tf.tanh)
+                w = FullyConnected('FC2', h, 1, nl=tf.tanh)
+                tmp_outputs.append(w)
+                tmp_input = h
+                #tmp_input = FullyConnected('FC3', w, self.num_gen_feature, nl=tf.identity)
+                attw = tf.get_variable("attw", shape=(len(prev_states), 1, 1))
+                attw = tf.nn.softmax(attw, axis=0)
+                tmp_attention = tf.reduce_sum(tf.stack(prev_states, axis=0) * attw, axis=0)
 
-                w_val = FullyConnected('FC2_val', h, col_info['n'], nl=tf.tanh)
-                w_prob = FullyConnected('FC2_prob', h, col_info['n'], nl=tf.nn.softmax)
+            ptr += 1
 
-                tmp_outputs.append(w_val)
-                tmp_outputs.append(w_prob)
+            tmp_input = tf.concat([tmp_input, z], axis=1)
+            output, state = cell(tf.concat([tmp_input, tmp_attention], axis=1), state)
+            prev_states.append(state[1])
+            tmp_states.append(state)
 
-                tmp_input = FullyConnected('FC3', tf.concat([w_val, w_prob], axis=1),
-                                           self.num_gen_feature, nl=tf.identity)
+            with tf.variable_scope("%02d" % ptr):
+                h = FullyConnected('FC', output, self.num_gen_feature, nl=tf.tanh)
+                w = FullyConnected('FC2', h, col_info['n'], nl=tf.nn.softmax)
+                tmp_outputs.append(w)
+
+                tmp_input = FullyConnected('FC3', w, self.num_gen_feature, nl=tf.identity)
+
                 attw = tf.get_variable("attw", shape=(len(prev_states), 1, 1))
                 attw = tf.nn.softmax(attw, axis=0)
                 tmp_attention = tf.reduce_sum(tf.stack(prev_states, axis=0) * attw, axis=0)
@@ -702,6 +713,7 @@ class GraphBuilder(ModelDescBase):
                     real = tf.reduce_sum(vecs_pos[ptr], axis=0)
                     real = real / tf.reduce_sum(real)
                     KL += self.compute_kl(real, dist)
+
                     ptr += 1
 
                 else:

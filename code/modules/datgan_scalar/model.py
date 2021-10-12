@@ -18,9 +18,9 @@ import numpy as np
 from tensorpack import BatchData, ModelSaver, PredictConfig, QueueInput, SaverRestore, SimpleDatasetPredictor
 from tensorpack.utils import logger
 
-from modules.datgan.data import Preprocessor, RandomZData, DATGANDataFlow
-from modules.datgan.trainer import GANTrainer
-from modules.datgan.graph import GraphBuilder
+from modules.datgan_scalar.data import Preprocessor, RandomZData, DATGANDataFlow
+from modules.datgan_scalar.trainer import GANTrainer
+from modules.datgan_scalar.graph import GraphBuilder
 
 import networkx as nx
 
@@ -289,13 +289,12 @@ class DATGAN:
 
             elif col_info['type'] == 'continuous':
 
-                n_modes = col_info['n']
+                val = results[:, ptr:ptr + 1]
+                ptr += 1
 
-                val = results[:, ptr:ptr + n_modes]
-                ptr += n_modes
-
-                pro = results[:, ptr:ptr + n_modes]
-                ptr += n_modes
+                gaussian_components = col_info['n']
+                pro = results[:, ptr:ptr + gaussian_components]
+                ptr += gaussian_components
 
                 features[col] = np.concatenate([val, pro], axis=1)
 
