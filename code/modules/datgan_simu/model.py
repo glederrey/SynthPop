@@ -18,9 +18,9 @@ import numpy as np
 from tensorpack import BatchData, ModelSaver, PredictConfig, QueueInput, SaverRestore, SimpleDatasetPredictor
 from tensorpack.utils import logger
 
-from modules.datgan_noonehot.data import Preprocessor, RandomZData, DATGANDataFlow
-from modules.datgan_noonehot.trainer import GANTrainer
-from modules.datgan_noonehot.graph import GraphBuilder
+from modules.datgan_simu.data import Preprocessor, RandomZData, DATGANDataFlow
+from modules.datgan_simu.trainer import GANTrainer
+from modules.datgan_simu.graph import GraphBuilder
 
 import networkx as nx
 
@@ -103,12 +103,10 @@ class DATGAN:
         self.optimizer = optimizer
 
         # DATGAN parameters for continuous variable
-        self.one_hot = False
+        self.simulating = True
         self.encoding = 'DATGAN'
         self.std_span = 2
         self.max_clusters = 10
-        # Can be TGAN, simple or complex
-        self.structure = 'TGAN'
 
         if gpu:
             os.environ['CUDA_VISIBLE_DEVICES'] = gpu
@@ -131,8 +129,7 @@ class DATGAN:
             num_dis_hidden=self.num_dis_hidden,
             optimizer=self.optimizer,
             training=training,
-            one_hot=self.one_hot,
-            structure=self.structure
+            simulating=self.simulating
         )
 
     def fit(self, data, dag):
@@ -173,7 +170,7 @@ class DATGAN:
             logger.info("Preprocessing the data!")
 
             self.preprocessor = Preprocessor(continuous_columns=self.continuous_columns, columns_order=self.var_order)
-            self.preprocessor.set_inputs(self.max_clusters, self.std_span, self.encoding, self.one_hot)
+            self.preprocessor.set_inputs(self.max_clusters, self.std_span, self.encoding, self.simulating)
             transformed_data = self.preprocessor.fit_transform(data)
 
             # Save the preprocessor and the data
@@ -200,8 +197,6 @@ class DATGAN:
             model=self.model,
             input_queue=input_queue,
         )
-
-        asd
 
         # Checking if previous training already exists
         session_init = None
@@ -286,21 +281,18 @@ class DATGAN:
             # Get info
             col_info = self.metadata['details'][col]
             if col_info['type'] == 'category':
-                features[col] = results[:, ptr:ptr + col_info['n']]
+                features[col] = results[:, ptr:ptr + 1]
                 ptr += 1
 
             elif col_info['type'] == 'continuous':
 
-                val = results[:, ptr:ptr + 1]
-                ptr += 1
+                n_modes = col_info['n']
 
-                if self.one_hot:
-                    pro = results[:, ptr:ptr + 1]
-                    ptr += 1
-                else:
-                    gaussian_components = col_info['n']
-                    pro = results[:, ptr:ptr + gaussian_components]
-                    ptr += gaussian_components
+                val = results[:, ptr:ptr + n_modes]
+                ptr += n_modes
+
+                pro = results[:, ptr:ptr + n_modes]
+                ptr += n_modes
 
                 features[col] = np.concatenate([val, pro], axis=1)
 

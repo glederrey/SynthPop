@@ -13,7 +13,7 @@ from sklearn.preprocessing import LabelEncoder
 from tensorpack import DataFlow, RNGDataFlow
 from tensorpack.utils import logger
 
-from modules.datgan.pers_homology import Peak, get_persistent_homology
+from modules.datgan_simu.pers_homology import Peak, get_persistent_homology
 
 
 def check_metadata(metadata):

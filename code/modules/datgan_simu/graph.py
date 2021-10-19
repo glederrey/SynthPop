@@ -1,48 +1,18 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
-"""Module with the model for DATGAN (Directed Acyclic Tabular GAN), based on TGAN.
-
-This module contains two classes:
-
-- :attr:`GraphBuilder`: That defines the graph and implements a Tensorpack compatible API.
-- :attr:`TGANModel`: The public API for the model, that offers a simplified interface for the
-  underlying operations with GraphBuilder and trainers in order to fit and sample data.
-"""
-import json
-import os
-import pickle
-import tarfile
-import copy
-
 import numpy as np
 import tensorflow as tf
-from tensorpack import (
-    BatchData, BatchNorm, Dropout, FullyConnected, InputDesc, ModelDescBase, ModelSaver,
-    PredictConfig, QueueInput, SaverRestore, SimpleDatasetPredictor, logger)
+
+from tensorpack import BatchNorm, Dropout, FullyConnected, InputDesc, ModelDescBase
 from tensorpack.tfutils.scope_utils import auto_reuse_variable_scope
 from tensorpack.tfutils.summary import add_moving_summary
 from tensorpack.utils.argtools import memoized
-
-from modules.datgan_no_att.data import Preprocessor, RandomZData, TGANDataFlow
-from modules.datgan_no_att.trainer import GANTrainer
+from tensorpack.utils import logger
 
 import networkx as nx
 
-TUNABLE_VARIABLES = {
-    'batch_size': [50, 100, 200],
-    'z_dim': [50, 100, 200, 400],
-    'num_gen_rnn': [100, 200, 300, 400, 500, 600],
-    'num_gen_feature': [100, 200, 300, 400, 500, 600],
-    'num_dis_layers': [1, 2, 3, 4, 5],
-    'num_dis_hidden': [100, 200, 300, 400, 500],
-    'learning_rate': [0.0002, 0.0005, 0.001],
-    'noise': [0.05, 0.1, 0.2, 0.3]
-}
-
 
 class GraphBuilder(ModelDescBase):
-    """Main model for DATGAN.
+    """
+    Main model for DATGAN.
 
     Args:
         None
@@ -65,7 +35,8 @@ class GraphBuilder(ModelDescBase):
         num_dis_layers=1,
         num_dis_hidden=100,
         optimizer='AdamOptimizer',
-        training=True
+        training=True,
+        simulating=None
     ):
         """Initialize the object, set arguments as attributes."""
         self.metadata = metadata
@@ -81,9 +52,11 @@ class GraphBuilder(ModelDescBase):
         self.num_dis_hidden = num_dis_hidden
         self.optimizer = optimizer
         self.training = training
+        self.simulating = simulating
 
     def collect_variables(self, g_scope='gen', d_scope='discrim'):
-        """Assign generator and discriminator variables from their scopes.
+        """
+        Assign generator and discriminator variables from their scopes.
 
         Args:
             g_scope(str): Scope for the generator.
@@ -100,7 +73,8 @@ class GraphBuilder(ModelDescBase):
             raise ValueError('There are no variables defined in some of the given scopes')
 
     def build_losses(self, logits_real, logits_fake, extra_g=0, l2_norm=0.00001):
-        r"""D and G play two-player minimax game with value function :math:`V(G,D)`.
+        r"""
+        D and G play two-player minimax game with value function :math:`V(G,D)`.
 
         .. math::
 
@@ -185,24 +159,27 @@ class GraphBuilder(ModelDescBase):
         for col in self.metadata['details'].keys():
             col_info = self.metadata['details'][col]
             if col_info['type'] == 'continuous':
-                gaussian_components = col_info['n']
+
+                n_modes = col_info['n']
+
                 inputs.append(
                     InputDesc(tf.float32,
-                              (self.batch_size, 1),
+                              (self.batch_size, n_modes),
                               'input_{}_value'.format(col))
                 )
 
                 inputs.append(
                     InputDesc(tf.float32,
-                              (self.batch_size, gaussian_components),
+                              (self.batch_size, n_modes),
                               'input_{}_cluster'.format(col)
                               )
                 )
 
             elif col_info['type'] == 'category':
-                inputs.append(InputDesc(tf.int32,
-                                        (self.batch_size, 1),
-                                        'input_{}'.format(col))
+                inputs.append(
+                    InputDesc(tf.int32,
+                              (self.batch_size, 1),
+                              'input_{}'.format(col))
                               )
 
             else:
@@ -288,14 +265,16 @@ class GraphBuilder(ModelDescBase):
             states = {}
 
             inputs = []
+            attentions = []
             name_to_id = {}
 
             input = None
             state = None
+            attention = None
 
             # Go through all variables
             for col_id, col in enumerate(self.metadata['details'].keys()):
-                print("\033[91m-> Creating cell for {} (in-edges: {})".format(col, len(in_edges[col])))
+                logger.info("\033[91mCreating cell for {} (in-edges: {})".format(col, len(in_edges[col])))
 
                 # Get info
                 col_info = self.metadata['details'][col]
@@ -308,11 +287,13 @@ class GraphBuilder(ModelDescBase):
                     if len(in_edges[col]) == 0:
                         input = tf.get_variable(name='go_{}'.format(col), shape=(1, self.num_gen_feature))
                         input = tf.tile(input, [self.batch_size, 1])
+                        attention = tf.zeros(shape=(self.batch_size, self.num_gen_rnn), dtype='float32')
                         # LSTM state
                         state = cell.zero_state(self.batch_size, dtype='float32')
                     else:
                         id_ = name_to_id[in_edges[col][0]]
                         input = inputs[id_]
+                        attention = attentions[id_]
                         # LSTM state
                         state = states[in_edges[col][0]][-1]
 
@@ -327,11 +308,15 @@ class GraphBuilder(ModelDescBase):
                             for s in states[n]:
                                 prev_states.append(s[1])
 
-                    [tmp_states, tmp_inputs, tmp_outputs, ptr] = \
-                        self.create_cell(cell, z, col, col_info, input, state, ptr)
+                    [tmp_attention, tmp_states, tmp_inputs,
+                     tmp_outputs, ptr] = self.create_cell(cell, z, col, col_info, input,
+                                                          attention, prev_states, state, ptr)
 
                     # Add the input to the list of inputs
                     inputs.append(tmp_inputs)
+
+                    # Add the attention to the list of attentions
+                    attentions.append(tmp_attention)
 
                     # Add the state to the list of states
                     states[col] = tmp_states
@@ -341,140 +326,144 @@ class GraphBuilder(ModelDescBase):
                         outputs.append(o)
 
                 else:
-                    # multi-inputs LSTM
-                    miLSTM_outputs = []
+                    # Compute the previous states
+                    ancestors = nx.ancestors(self.dag, col)
+                    prev_states = []
+                    for n in self.dag.nodes:
+                        if n in ancestors:
+                            for s in states[n]:
+                                prev_states.append(s[1])
+
+                    # Go through all in edges to get input, attention and state
                     miLSTM_states = []
                     miLSTM_inputs = []
                     miLSTM_attentions = []
-
-                    # Go through all in edges and create an LSTM cell
                     for name in in_edges[col]:
                         id_ = name_to_id[name]
-                        input = inputs[id_]
+                        miLSTM_inputs.append(inputs[id_])
+                        miLSTM_attentions.append(attentions[id_])
                         # LSTM state
-                        state = states[name][-1]
+                        miLSTM_states.append(states[name][-1])
 
-                        # Concat the input with the random variable z
-                        input = tf.concat([input, z], axis=1)
-
-                        # Compute the previous states
-                        ancestors = nx.ancestors(self.dag, col)
-                        prev_states = []
-                        for n in self.dag.nodes:
-                            if n in ancestors:
-                                for s in states[n]:
-                                    prev_states.append(s[1])
-
-                        [tmp_states, tmp_inputs, tmp_outputs, ptr] = \
-                            self.create_cell(cell, z, col, col_info, input, state, ptr)
-
-                        # Add the input to the list of inputs
-                        miLSTM_inputs.append(tmp_inputs)
-
-                        # Add the state to the list of states
-                        miLSTM_states.append(tmp_states)
-
-                        # Add the list of outputs to the outputs
-                        miLSTM_outputs.append(tmp_outputs)
-
-                    # Use of FCs to transform the multi-outputs into a single one
+                    # Concatenate the inputs, attention and states
                     with tf.variable_scope("%02d" % ptr):
                         # FC for inputs
                         tmp = tf.concat(miLSTM_inputs, axis=1)
                         tmp_fc = FullyConnected('FC_inputs', tmp, self.num_gen_feature, nl=None)
-                        inputs.append(tmp_fc)
+                        input = tmp_fc
 
-                        # FC for outputs
-                        if col_info['type'] == 'continuous':
-                            tmp = []
-                            for j in range(len(miLSTM_outputs)):
-                                tmp.append(miLSTM_outputs[j][0])
+                        # FC for attentions
+                        tmp = tf.concat(miLSTM_attentions, axis=1)
+                        tmp_fc = FullyConnected('FC_attentions', tmp, self.num_gen_rnn, nl=None)
+                        attention = tmp_fc
 
-                            tmp_fc = FullyConnected('FC_output_cont_0', tf.concat(tmp, axis=1), 1, nl=tf.tanh)
-                            outputs.append(tmp_fc)
-
-                            tmp = []
-                            for j in range(len(miLSTM_outputs)):
-                                tmp.append(miLSTM_outputs[j][1])
-
-                            tmp_fc = FullyConnected('FC_output_cont_1', tf.concat(tmp, axis=1), self.gaussian_components,
-                                                    nl=tf.nn.softmax)
-                            outputs.append(tmp_fc)
-
-                        elif col_info['type'] == 'category':
-                            tmp = []
-                            for j in range(len(miLSTM_outputs)):
-                                tmp.append(miLSTM_outputs[j][0])
-
-                            tmp_fc = FullyConnected('FC_output_cat_0', tf.concat(tmp, axis=1), col_info['n'],
-                                                    nl=tf.nn.softmax)
-                            outputs.append(tmp_fc)
-
-                        # LSTM for lstm_state (LSTMStateTuple)
-                        states[col] = []
+                        # FC for states
+                        tmp_states = []
                         # miLSTM_states is a list of list of tuples
                         for j in range(len(miLSTM_states[0])):
-                            tmp_state = []
-                            for k in range(2):  # tuple
-                                tmp = []
-                                for i in range(len(miLSTM_states)):
-                                    tmp.append(miLSTM_states[i][j][k])
+                            tmp = []
+                            for i in range(len(miLSTM_states)):
+                                tmp.append(miLSTM_states[i][j])
 
-                                tmp_fc = FullyConnected('FC_lstm_state_{}_{}'.format(j,k), tf.concat(tmp, axis=1),
-                                                        self.num_gen_rnn, nl=None)
+                            tmp_fc = FullyConnected('FC_lstm_state_{}'.format(j), tf.concat(tmp, axis=1),
+                                                    self.num_gen_rnn, nl=None)
 
-                                tmp_state.append(tmp_fc)
+                            tmp_states.append(tmp_fc)
 
-                            states[col].append(tf.nn.rnn_cell.LSTMStateTuple(tmp_state[0], tmp_state[1]))
+                        state = tf.nn.rnn_cell.LSTMStateTuple(tmp_states[0], tmp_states[1])
 
                     ptr += 1
 
+                    # Concat the input with the random variable z
+                    input = tf.concat([input, z], axis=1)
+
+                    # Final LSTM cell
+                    [tmp_attention, tmp_states, tmp_inputs,
+                     tmp_outputs, ptr] = self.create_cell(cell, z, col, col_info, input,
+                                                          attention, prev_states, state, ptr)
+
+                    # Add the input to the list of inputs
+                    inputs.append(tmp_inputs)
+
+                    # Add the attention to the list of attentions
+                    attentions.append(tmp_attention)
+
+                    # Add the state to the list of states
+                    states[col] = tmp_states
+
+                    # Add the list of outputs to the outputs
+                    for o in tmp_outputs:
+                        outputs.append(o)
+
         return outputs
 
-    def create_cell(self, cell, z, col, col_info, inputs, state, ptr):
+    def create_cell(self, cell, z, col, col_info, inputs, attention, prev_states, state, ptr):
         """
         Function that create the cells for the generator.
         """
 
         tmp_states = []
         tmp_outputs = []
+        tmp_attention = None
         tmp_input = None
 
         # create the cell(s)
         if col_info['type'] == 'continuous':
-            output, state = cell(inputs, state)
-            tmp_states.append(state)
-
-            gaussian_components = col_info['n']
-            with tf.variable_scope("%02d" % ptr):
-                h = FullyConnected('FC', output, self.num_gen_feature, nl=tf.tanh)
-                tmp_outputs.append(FullyConnected('FC2', h, 1, nl=tf.tanh))
-                tmp_input = tf.concat([h, z], axis=1)
-
-            ptr += 1
-
-            output, state = cell(tmp_input, state)
+            output, state = cell(tf.concat([inputs, attention], axis=1), state)
+            prev_states.append(state[1])
             tmp_states.append(state)
 
             with tf.variable_scope("%02d" % ptr):
                 h = FullyConnected('FC', output, self.num_gen_feature, nl=tf.tanh)
-                w = FullyConnected('FC2', h, gaussian_components, nl=tf.nn.softmax)
-                tmp_outputs.append(w)
-                tmp_input = FullyConnected('FC3', w, self.num_gen_feature, nl=tf.identity)
+
+                w_val = FullyConnected('FC2_val', h, col_info['n'], nl=tf.tanh)
+                w_prob = FullyConnected('FC2_prob', h, col_info['n'], nl=tf.nn.softmax)
+
+                tmp_outputs.append(w_val)
+                tmp_outputs.append(w_prob)
+
+                vec_ws = [w_val, w_prob]
+
+                """
+                # Add the choice in the vector w.
+                w_dec = tf.reshape(tf.random.categorical(tf.math.log(w_prob), 1), [-1])
+                one_hot = tf.one_hot(w_dec, col_info['n'])
+                vec_ws.append(tf.cast(one_hot, dtype='float32'))
+                """
+
+                tmp_input = FullyConnected('FC3', tf.concat(vec_ws, axis=1),
+                                           self.num_gen_feature, nl=tf.identity)
+                attw = tf.get_variable("attw", shape=(len(prev_states), 1, 1))
+                attw = tf.nn.softmax(attw, axis=0)
+                tmp_attention = tf.reduce_sum(tf.stack(prev_states, axis=0) * attw, axis=0)
 
             ptr += 1
 
         elif col_info['type'] == 'category':
-            output, state = cell(inputs, state)
+            output, state = cell(tf.concat([inputs, attention], axis=1), state)
+            prev_states.append(state[1])
             tmp_states.append(state)
 
             with tf.variable_scope("%02d" % ptr):
                 h = FullyConnected('FC', output, self.num_gen_feature, nl=tf.tanh)
                 w = FullyConnected('FC2', h, col_info['n'], nl=tf.nn.softmax)
                 tmp_outputs.append(w)
-                one_hot = tf.one_hot(tf.argmax(w, axis=1), col_info['n'])
-                tmp_input = FullyConnected(
-                    'FC3', one_hot, self.num_gen_feature, nl=tf.identity)
+
+                tmp_input = FullyConnected('FC3', w, self.num_gen_feature, nl=tf.identity)
+
+                # res_tensor = tf.reshape(tf.random.categorical(tf.math.log(w), 1), [-1])
+                # res_tensor = tf.argmax(w, axis=1)
+
+                #one_hot = tf.one_hot(res_tensor, col_info['n'])
+
+                #tmp_input = FullyConnected('FC3', one_hot, self.num_gen_feature, nl=tf.identity)
+
+                #vec_ws = [w, one_hot]
+                #tmp_input = FullyConnected('FC3', tf.concat(vec_ws, axis=1), self.num_gen_feature, nl=tf.identity)
+
+                attw = tf.get_variable("attw", shape=(len(prev_states), 1, 1))
+                attw = tf.nn.softmax(attw, axis=0)
+                tmp_attention = tf.reduce_sum(tf.stack(prev_states, axis=0) * attw, axis=0)
 
             ptr += 1
 
@@ -484,7 +473,7 @@ class GraphBuilder(ModelDescBase):
                 "`continuous`. Instead it was {}.".format(col, col_info['type'])
             )
 
-        return tmp_states, tmp_input, tmp_outputs, ptr
+        return tmp_attention, tmp_states, tmp_input, tmp_outputs, ptr
 
     @staticmethod
     def batch_diversity(l, n_kernel=10, kernel_dim=10):
@@ -620,10 +609,12 @@ class GraphBuilder(ModelDescBase):
 
         z = tf.placeholder_with_default(z, [None, self.z_dim], name='z')
 
+        # Create the output for the model
         with tf.variable_scope('gen'):
             vecs_gen = self.generator(z)
 
-            vecs_denorm = []
+            vecs_res = []
+            vecs_neg = []
             ptr = 0
             # Go through all variables
             for col_id, col in enumerate(self.metadata['details'].keys()):
@@ -631,15 +622,28 @@ class GraphBuilder(ModelDescBase):
                 col_info = self.metadata['details'][col]
 
                 if col_info['type'] == 'category':
-                    t = tf.argmax(vecs_gen[ptr], axis=1)
-                    t = tf.cast(tf.reshape(t, [-1, 1]), 'float32')
-                    vecs_denorm.append(t)
+
+                    res_tensor = tf.reshape(tf.random.categorical(tf.math.log(vecs_gen[ptr]), 1), [-1])
+                    #res_tensor = tf.argmax(vecs_gen[ptr], axis=1)
+
+                    res_tensor = tf.cast(tf.reshape(res_tensor, [-1, 1]), 'float32')
+                    vecs_res.append(res_tensor)
+
+                    val = vecs_gen[ptr]
+                    if self.training:
+                        noise = tf.random_uniform(tf.shape(val), minval=0, maxval=self.noise)
+                        val = (val + noise) / tf.reduce_sum(val + noise, keepdims=True, axis=1)
+                    vecs_neg.append(val)
+
                     ptr += 1
 
                 elif col_info['type'] == 'continuous':
-                    vecs_denorm.append(vecs_gen[ptr])
+                    vecs_res.append(vecs_gen[ptr])
+                    vecs_neg.append(vecs_gen[ptr])
                     ptr += 1
-                    vecs_denorm.append(vecs_gen[ptr])
+
+                    vecs_res.append(vecs_gen[ptr])
+                    vecs_neg.append(vecs_gen[ptr])
                     ptr += 1
 
                 else:
@@ -648,7 +652,8 @@ class GraphBuilder(ModelDescBase):
                         "`continuous`. Instead it was {}.".format(col_id, col_info['type'])
                     )
 
-            tf.identity(tf.concat(vecs_denorm, axis=1), name='gen')
+            # This weird thing is then used for sampling the generator once it has been trained.
+            tf.identity(tf.concat(vecs_res, axis=1), name='gen')
 
         vecs_pos = []
         ptr = 0
@@ -658,20 +663,23 @@ class GraphBuilder(ModelDescBase):
             col_info = self.metadata['details'][col]
 
             if col_info['type'] == 'category':
+                # inputs[ptr] is a vector containing the index of the chosen category
                 one_hot = tf.one_hot(tf.reshape(inputs[ptr], [-1]), col_info['n'])
-                noise_input = one_hot
 
                 if self.training:
                     noise = tf.random_uniform(tf.shape(one_hot), minval=0, maxval=self.noise)
-                    noise_input = (one_hot + noise) / tf.reduce_sum(
+                    one_hot = (one_hot + noise) / tf.reduce_sum(
                         one_hot + noise, keepdims=True, axis=1)
 
-                vecs_pos.append(noise_input)
+                vecs_pos.append(one_hot)
+
                 ptr += 1
 
             elif col_info['type'] == 'continuous':
+                # continuous value in the mixture
                 vecs_pos.append(inputs[ptr])
                 ptr += 1
+
                 vecs_pos.append(inputs[ptr])
                 ptr += 1
 
@@ -681,7 +689,7 @@ class GraphBuilder(ModelDescBase):
                     "`continuous`. Instead it was {}.".format(col_id, col_info['type'])
                 )
 
-        KL = 0.
+        KL = 0.0
         ptr = 0
         if self.training:
             # Go through all variables
@@ -690,7 +698,7 @@ class GraphBuilder(ModelDescBase):
                 col_info = self.metadata['details'][col]
 
                 if col_info['type'] == 'category':
-                    dist = tf.reduce_sum(vecs_gen[ptr], axis=0)
+                    dist = tf.reduce_sum(vecs_neg[ptr], axis=0)
                     dist = dist / tf.reduce_sum(dist)
 
                     real = tf.reduce_sum(vecs_pos[ptr], axis=0)
@@ -700,12 +708,12 @@ class GraphBuilder(ModelDescBase):
 
                 elif col_info['type'] == 'continuous':
                     ptr += 1
-                    dist = tf.reduce_sum(vecs_gen[ptr], axis=0)
+                    dist = tf.reduce_sum(vecs_neg[ptr], axis=0)
                     dist = dist / tf.reduce_sum(dist)
+
                     real = tf.reduce_sum(vecs_pos[ptr], axis=0)
                     real = real / tf.reduce_sum(real)
                     KL += self.compute_kl(real, dist)
-
                     ptr += 1
 
                 else:
@@ -716,7 +724,7 @@ class GraphBuilder(ModelDescBase):
 
         with tf.variable_scope('discrim'):
             discrim_pos = self.discriminator(vecs_pos)
-            discrim_neg = self.discriminator(vecs_gen)
+            discrim_neg = self.discriminator(vecs_neg)
 
         self.build_losses(discrim_pos, discrim_neg, extra_g=KL, l2_norm=self.l2norm)
         self.collect_variables()
@@ -730,348 +738,3 @@ class GraphBuilder(ModelDescBase):
 
         else:
             return tf.train.GradientDescentOptimizer(self.learning_rate)
-
-
-class DATGAN:
-    """Main model from TGAN.
-
-    Args:
-        continuous_columns (list[int]): 0-index list of column indices to be considered continuous.
-        output (str, optional): Path to store the model and its artifacts. Defaults to
-            :attr:`output`.
-        gpu (list[str], optional):Comma separated list of GPU(s) to use. Defaults to :attr:`None`.
-        max_epoch (int, optional): Number of epochs to use during training. Defaults to :attr:`5`.
-        steps_per_epoch (int, optional): Number of steps to run on each epoch. Defaults to
-            :attr:`10000`.
-        save_checkpoints(bool, optional): Whether or not to store checkpoints of the model after
-            each training epoch. Defaults to :attr:`True`
-        restore_session(bool, optional): Whether or not continue training from the last checkpoint.
-            Defaults to :attr:`True`.
-        batch_size (int, optional): Size of the batch to feed the model at each step. Defaults to
-            :attr:`200`.
-        z_dim (int, optional): Number of dimensions in the noise input for the generator.
-            Defaults to :attr:`100`.
-        noise (float, optional): Upper bound to the gaussian noise added to categorical columns.
-            Defaults to :attr:`0.2`.
-        l2norm (float, optional):
-            L2 reguralization coefficient when computing losses. Defaults to :attr:`0.00001`.
-        learning_rate (float, optional): Learning rate for the optimizer. Defaults to
-            :attr:`0.001`.
-        num_gen_rnn (int, optional): Defaults to :attr:`400`.
-        num_gen_feature (int, optional): Number of features of in the generator. Defaults to
-            :attr:`100`
-        num_dis_layers (int, optional): Defaults to :attr:`2`.
-        num_dis_hidden (int, optional): Defaults to :attr:`200`.
-        optimizer (str, optional): Name of the optimizer to use during `fit`,possible values are:
-            [`GradientDescentOptimizer`, `AdamOptimizer`, `AdadeltaOptimizer`]. Defaults to
-            :attr:`AdamOptimizer`.
-    """
-
-    def __init__(
-        self, continuous_columns, output='output', gpu=None, max_epoch=5, steps_per_epoch=10000,
-        save_checkpoints=True, restore_session=True, batch_size=200, z_dim=200, noise=0.2,
-        l2norm=0.00001, learning_rate=0.001, num_gen_rnn=100, num_gen_feature=100,
-        num_dis_layers=1, num_dis_hidden=100, optimizer='AdamOptimizer',
-    ):
-        """Initialize object."""
-        # Output
-        self.continuous_columns = continuous_columns
-        self.log_dir = os.path.join(output, 'logs')
-        self.model_dir = os.path.join(output, 'model')
-        self.output = output
-
-        # DAG
-        self.dag = None
-        self.var_order = None
-
-        # Training params
-        self.max_epoch = max_epoch
-        self.steps_per_epoch = steps_per_epoch
-        self.save_checkpoints = save_checkpoints
-        self.restore_session = restore_session
-
-        # Model params
-        self.model = None
-        self.batch_size = batch_size
-        self.z_dim = z_dim
-        self.noise = noise
-        self.l2norm = l2norm
-        self.learning_rate = learning_rate
-        self.num_gen_rnn = num_gen_rnn
-        self.num_gen_feature = num_gen_feature
-        self.num_dis_layers = num_dis_layers
-        self.num_dis_hidden = num_dis_hidden
-        self.optimizer = optimizer
-
-        if gpu:
-            os.environ['CUDA_VISIBLE_DEVICES'] = gpu
-
-        self.gpu = gpu
-
-    def get_model(self, training=True):
-        """Return a new instance of the model."""
-        return GraphBuilder(
-            metadata=self.metadata,
-            dag=self.dag,
-            batch_size=self.batch_size,
-            z_dim=self.z_dim,
-            noise=self.noise,
-            l2norm=self.l2norm,
-            learning_rate=self.learning_rate,
-            num_gen_rnn=self.num_gen_rnn,
-            num_gen_feature=self.num_gen_feature,
-            num_dis_layers=self.num_dis_layers,
-            num_dis_hidden=self.num_dis_hidden,
-            optimizer=self.optimizer,
-            training=training
-        )
-
-    def prepare_sampling(self):
-        """Prepare model for generate samples."""
-        if self.model is None:
-            self.model = self.get_model(training=False)
-
-        else:
-            self.model.training = False
-
-        predict_config = PredictConfig(
-            session_init=SaverRestore(self.restore_path),
-            model=self.model,
-            input_names=['z'],
-            output_names=['gen/gen', 'z'],
-        )
-
-        self.simple_dataset_predictor = SimpleDatasetPredictor(
-            predict_config,
-            RandomZData((self.batch_size, self.z_dim))
-        )
-
-    def fit(self, data, dag):
-        """Fit the model to the given data.
-
-        Args:
-            data(pandas.DataFrame): dataset to fit the model.
-            dag(networkx.classes.digraph.DiGraph): DAG for the relations between variables
-
-        Returns:
-            None
-
-        """
-        # Verify that the DAG has the same number of nodes as the number of variables in the data
-        # and that it's indeed a DAG.
-        self.dag = dag
-        self.verify_dag(data)
-        self.var_order = self.get_order_variables()
-
-        self.preprocessor = Preprocessor(continuous_columns=self.continuous_columns, columns_order=self.var_order)
-        data = self.preprocessor.fit_transform(data)
-        self.metadata = self.preprocessor.metadata
-        dataflow = TGANDataFlow(data, self.metadata)
-        batch_data = BatchData(dataflow, self.batch_size)
-        input_queue = QueueInput(batch_data)
-
-        self.model = self.get_model(training=True)
-
-        trainer = GANTrainer(
-            model=self.model,
-            input_queue=input_queue,
-        )
-
-        self.restore_path = os.path.join(self.model_dir, 'checkpoint')
-
-        if os.path.isfile(self.restore_path) and self.restore_session:
-            session_init = SaverRestore(self.restore_path)
-            with open(os.path.join(self.log_dir, 'stats.json')) as f:
-                starting_epoch = json.load(f)[-1]['epoch_num'] + 1
-
-        else:
-            session_init = None
-            starting_epoch = 1
-
-        action = 'k' if self.restore_session else None
-        logger.set_logger_dir(self.log_dir, action=action)
-
-        callbacks = []
-        if self.save_checkpoints:
-            callbacks.append(ModelSaver(checkpoint_dir=self.model_dir))
-
-        trainer.train_with_defaults(
-            callbacks=callbacks,
-            steps_per_epoch=self.steps_per_epoch,
-            max_epoch=self.max_epoch,
-            session_init=session_init,
-            starting_epoch=starting_epoch
-        )
-
-        self.prepare_sampling()
-
-    def sample(self, num_samples):
-        """Generate samples from model.
-
-        Args:
-            num_samples(int)
-
-        Returns:
-            None
-
-        Raises:
-            ValueError
-
-        """
-        max_iters = (num_samples // self.batch_size)
-
-        results = []
-        for idx, o in enumerate(self.simple_dataset_predictor.get_result()):
-            results.append(o[0])
-            if idx + 1 == max_iters:
-                break
-
-        results = np.concatenate(results, axis=0)
-
-        ptr = 0
-        features = {}
-        # Go through all variables
-        for col_id, col in enumerate(self.metadata['details'].keys()):
-            # Get info
-            col_info = self.metadata['details'][col]
-            if col_info['type'] == 'category':
-                features[col] = results[:, ptr:ptr + 1]
-                ptr += 1
-
-            elif col_info['type'] == 'continuous':
-                gaussian_components = col_info['n']
-                val = results[:, ptr:ptr + 1]
-                ptr += 1
-                pro = results[:, ptr:ptr + gaussian_components]
-                ptr += gaussian_components
-                features[col] = np.concatenate([val, pro], axis=1)
-
-            else:
-                raise ValueError(
-                    "self.metadata['details'][{}]['type'] must be either `category` or "
-                    "`continuous`. Instead it was {}.".format(col_id, col_info['type'])
-                )
-
-        return self.preprocessor.reverse_transform(features)[:num_samples].copy()
-
-    def tar_folder(self, tar_name):
-        """Generate a tar of :self.output:."""
-        with tarfile.open(tar_name, 'w:gz') as tar_handle:
-            for root, dirs, files in os.walk(self.output):
-                for file_ in files:
-                    tar_handle.add(os.path.join(root, file_))
-
-            tar_handle.close()
-
-    @classmethod
-    def load(cls, path, name):
-        """Load a pretrained model from a given path."""
-        with tarfile.open(path + name + '.tar.gz', 'r:gz') as tar_handle:
-            destination_dir = os.path.dirname(tar_handle.getmembers()[0].name)
-            tar_handle.extractall()
-
-        with open('{}/{}.pickle'.format(destination_dir, name), 'rb') as f:
-            instance = pickle.load(f)
-
-        instance.prepare_sampling()
-        return instance
-
-    def save(self, name, force=False):
-        """Save the fitted model in the given path."""
-        if os.path.exists(self.output) and not force:
-            logger.info('The indicated path already exists. Use `force=True` to overwrite.')
-            return
-
-        if not os.path.exists(self.output):
-            os.makedirs(self.output)
-
-        model = self.model
-        dataset_predictor = self.simple_dataset_predictor
-
-        self.model = None
-        self.simple_dataset_predictor = None
-
-        with open('{}/{}.pickle'.format(self.output, name), 'wb') as f:
-            pickle.dump(self, f)
-
-        self.model = model
-        self.simple_dataset_predictor = dataset_predictor
-
-        self.tar_folder(self.output + name + '.tar.gz')
-
-        logger.info('Model saved successfully.')
-
-    def verify_dag(self, data):
-        """
-        Verify that the given graph is indeed a dag.
-
-        :return:
-        """
-
-        # 1. Verify the type
-        if type(self.dag) is not nx.classes.digraph.DiGraph:
-            raise TypeError("Provided graph is not from the type \"networkx.classes.digraph."
-                            "DiGraph\": {}".format(type(self.dag)))
-
-        # 2. Verify that the graph is indeed a DAG
-        if not nx.algorithms.dag.is_directed_acyclic_graph(self.dag):
-
-            cycles = nx.algorithms.cycles.find_cycle(self.dag)
-
-            if len(cycles) > 0:
-                raise ValueError("Provided graph is not a DAG. Cycles found: {}".format(cycles))
-            else:
-                raise ValueError("Provided graph is not a DAG.")
-
-        # 3. Verify that the dag has the correct number of nodes
-        if len(self.dag.nodes) != len(data.columns):
-            raise ValueError("DAG does not have the same number of nodes ({}) as the number of "
-                             "variables in the data ({}).".format(len(self.dag.nodes), len(data.columns)))
-
-    def get_in_edges(self):
-        # Get the in_edges
-        in_edges = {}
-
-        for n in self.dag.nodes:
-            in_edges[n] = []
-            for edge in self.dag.in_edges:
-                if edge[1] == n:
-                    in_edges[n].append(edge[0])
-
-        return in_edges
-
-    def get_order_variables(self):
-        """
-        Get the order of all the variables in the graph
-
-        :return: list of column names
-        """
-        # Get the in_edges
-        in_edges = self.get_in_edges()
-
-        untreated = set(self.dag.nodes)
-        treated = []
-
-        # Get all nodes with 0 in degree
-        to_treat = [node for node, in_degree in self.dag.in_degree() if in_degree == 0]
-
-        while len(untreated) > 0:
-            # remove the treated nodes
-            for n in to_treat:
-                untreated.remove(n)
-                treated.append(n)
-
-            to_treat = []
-            # Find the edges that are coming from the the treated nodes
-            for edge in self.dag.in_edges:
-
-                all_treated = True
-                for l in in_edges[edge[1]]:
-                    if l not in treated:
-                        all_treated = False
-
-                if edge[0] in treated and all_treated and edge[1] not in treated and edge[1] not in to_treat:
-                    to_treat.append(edge[1])
-
-        return treated
-

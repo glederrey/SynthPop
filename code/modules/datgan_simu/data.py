@@ -8,22 +8,12 @@ import urllib
 
 import numpy as np
 import pandas as pd
-from sklearn.mixture import GaussianMixture
+from sklearn.mixture import BayesianGaussianMixture, GaussianMixture
 from sklearn.preprocessing import LabelEncoder
 from tensorpack import DataFlow, RNGDataFlow
+from tensorpack.utils import logger
 
-DEMO_DATASETS = {
-    'census': (
-        'http://hdi-project-tgan.s3.amazonaws.com/census-train.csv',
-        'data/census.csv',
-        [0, 5, 16, 17, 18, 29, 38]
-    ),
-    'covertype': (
-        'http://hdi-project-tgan.s3.amazonaws.com/covertype-train.csv',
-        'data/covertype.csv',
-        [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
-    )
-}
+from modules.datgan_simu.pers_homology import Peak, get_persistent_homology
 
 
 def check_metadata(metadata):
@@ -66,7 +56,7 @@ def check_inputs(function):
     return decorated
 
 
-class TGANDataFlow(RNGDataFlow):
+class DATGANDataFlow(RNGDataFlow):
     """Subclass of :class:`tensorpack.RNGDataFlow` prepared to work with :class:`numpy.ndarray`.
 
     Attributes:
@@ -103,8 +93,10 @@ class TGANDataFlow(RNGDataFlow):
             column_info = self.metadata['details'][col]
             if column_info['type'] == 'continuous':
                 col_data = data[col]
-                value = col_data[:, :1]
-                cluster = col_data[:, 1:]
+                n = column_info['n']
+                value = col_data[:, :n]
+                cluster = col_data[:, n:]
+
                 self.data.append(value)
                 self.data.append(cluster)
 
@@ -209,7 +201,8 @@ class MultiModalNumberTransformer:
     component actually works, which is equivalent to not clustering this feature.
 
     Args:
-        num_modes(int): Number of modes on given data.
+        max_clusters(int): Maximum number of Gaussian distributions in Bayesian GMM
+        weight_threshold(float): Weight threshold for a Gaussian distribution to be kept.
 
     Attributes:
         num_modes(int): Number of components in the `skelarn.mixture.GaussianMixture`_ model.
@@ -219,13 +212,23 @@ class MultiModalNumberTransformer:
 
     """
 
-    def __init__(self, num_modes=5):
+    def __init__(self):
         """Initialize instance."""
-        self.num_modes = num_modes
+        self.max_clusters = 10
+        self.std_span = 2
+        # encoding can be 'TGAN', 'CTGAN' or 'DATGAN'
+        self.encoding = 'DATGAN'
+        self.simulating = False
+
+    def set_inputs(self, max_clusters, std_span, encoding, simulating):
+        self.max_clusters = max_clusters
+        self.std_span = std_span
+        self.encoding = encoding
+        self.simulating = simulating
 
     @check_inputs
     def transform(self, data):
-        """Cluster values using a `skelarn.mixture.GaussianMixture`_ model.
+        """Cluster values using a `skelarn.mixture.BayesianGaussianMixture`_ model.
 
         Args:
             data(numpy.ndarray): Values to cluster in array of shape (n,1).
@@ -234,28 +237,93 @@ class MultiModalNumberTransformer:
             tuple[numpy.ndarray, numpy.ndarray, list, list]: Tuple containg the features,
             probabilities, averages and stds of the given data.
 
-        .. _skelarn.mixture.GaussianMixture: https://scikit-learn.org/stable/modules/generated/
-            sklearn.mixture.GaussianMixture.html
+        .. _skelarn.mixture.BayesianGaussianMixture: https://scikit-learn.org/stable/modules/generated/
+            sklearn.mixture.BayesianGaussianMixture.html
 
         """
-        model = GaussianMixture(self.num_modes)
-        model.fit(data)
 
-        means = model.means_.reshape((1, self.num_modes))
-        stds = np.sqrt(model.covariances_).reshape((1, self.num_modes))
+        if self.encoding is 'CTGAN':
+            model = BayesianGaussianMixture(
+                n_components=self.max_clusters,
+                weight_concentration_prior_type='dirichlet_process',
+                weight_concentration_prior=0.001,
+                n_init=1,
+                max_iter=100,
+                #random_state=13
+            )
+            model.fit(data)
 
-        features = (data - means) / (2 * stds)
-        probs = model.predict_proba(data)
-        argmax = np.argmax(probs, axis=1)
-        idx = np.arange(len(features))
-        features = features[idx, argmax].reshape([-1, 1])
+            # Threshold used in CTGAN
+            valid_component_indicator = model.weights_ > 0.005
+            n_modes = self.max_clusters
+        elif self.encoding is 'TGAN':
+            model = GaussianMixture(self.max_clusters)
+            model.fit(data)
 
-        features = np.clip(features, -0.99, 0.99)
+            valid_component_indicator = np.array([True]*self.max_clusters)
+            n_modes = self.max_clusters
+        elif self.encoding is 'DATGAN':
 
-        return features, probs, list(means.flat), list(stds.flat)
+            n_bins = 50
+            thresh = 1e-3
 
-    @staticmethod
-    def inverse_transform(data, info):
+            # Transform data using the histogram function
+            hist = np.histogram(data, bins=n_bins, density=True)
+
+            # Use the persistent homology to find the number of peaks in the data
+            peaks = get_persistent_homology(hist[0])
+            pers = np.array([p.get_persistence(hist[0]) for p in peaks])
+
+            n_peaks = sum(pers > thresh) - 1
+
+            logger.info("  Found {} peaks!".format(n_peaks))
+
+            # Decide on the number of modes for the BGM
+            if n_peaks < 2:
+                n_modes = self.max_clusters
+            else:
+                n_modes = min(n_peaks, self.max_clusters)
+
+            logger.info("  Encoding with {} components.".format(n_modes))
+            while True:
+                # Fit the BGM
+                model = BayesianGaussianMixture(
+                    n_components=n_modes,
+                    max_iter=200,
+                    n_init=10,
+                    init_params='kmeans',
+                    reg_covar=0,
+                    weight_concentration_prior_type='dirichlet_process',
+                    mean_precision_prior=.8,
+                    tol=1e-5,
+                    weight_concentration_prior=1e-5)
+                model.fit(data)
+
+                # Check that BGM is using all the classes!
+                pred_ = np.unique(model.predict(data))
+
+                if len(pred_) == n_modes:
+                    logger.info("  Predictions were done on {:d} components => FINISHED!".format(n_modes))
+                    valid_component_indicator = np.array([True] * n_modes)
+                    break
+                else:
+                    n_modes = len(pred_)
+                    logger.info("  Predictions were done on only {:d} components => Simplification!".format(n_modes))
+
+        means = model.means_.reshape((1, n_modes))
+        stds = np.sqrt(model.covariances_).reshape((1, n_modes))
+
+        # Fix this shitty normalization
+        normalized_values = ((data - means) / (self.std_span * stds))[:, valid_component_indicator]
+        probs = model.predict_proba(data)[:, valid_component_indicator]
+
+        # Clip the values
+        normalized_values = np.clip(normalized_values, -.99, .99)
+
+        return normalized_values, probs, model, valid_component_indicator
+
+    #@staticmethod
+    def inverse_transform(self, data, info):
         """Reverse the clustering of values.
 
         Args:
@@ -266,22 +334,34 @@ class MultiModalNumberTransformer:
            numpy.ndarray: Values in the original space.
 
         """
-        features = data[:, 0]
-        probs = data[:, 1:]
 
-        # Before:
-        #p_argmax = np.argmax(probs, axis=1)
+        gmm = info['transform']
+        valid_component_indicator = info['transform_aux']
+        n_modes = info['n']
 
-        # Fix: simulate using the probas
-        p_argmax = [np.random.choice(np.arange(0, len(pr)), p=pr) for pr in probs]
+        normalized_values = data[:, :n_modes]
+        probs = data[:, n_modes:]
 
-        mean = np.asarray(info['means'])
-        std = np.asarray(info['stds'])
+        if self.simulating:
+            selected_component = np.zeros(len(data), dtype='int')
+            for i in range(len(data)):
+                component_prob_t = probs[i] + 1e-6
+                component_prob_t = component_prob_t / component_prob_t.sum()
+                selected_component[i] = np.random.choice(
+                    np.arange(n_modes), p=component_prob_t)
+        else:
+            selected_component = np.argmax(probs, axis=1)
 
-        select_mean = mean[p_argmax]
-        select_std = std[p_argmax]
+        means = gmm.means_.reshape([-1])[valid_component_indicator]
+        stds = np.sqrt(gmm.covariances_).reshape([-1])[valid_component_indicator]
 
-        return features * 2 * select_std + select_mean
+        mean_t = means[selected_component]
+        std_t = stds[selected_component]
+
+        selected_normalized_value = normalized_values[
+            np.arange(len(data)), selected_component]
+
+        return selected_normalized_value * self.std_span * std_t + mean_t
 
 
 class Preprocessor:
@@ -308,11 +388,15 @@ class Preprocessor:
             continuous_columns = []
 
         self.continuous_columns = continuous_columns
+
         self.columns_order = columns_order
         self.metadata = metadata
         self.continous_transformer = MultiModalNumberTransformer()
         self.categorical_transformer = LabelEncoder()
         self.columns = None
+
+    def set_inputs(self, max_clusters, std_span, encoding, simulating):
+        self.continous_transformer.set_inputs(max_clusters, std_span, encoding, simulating)
 
     def fit_transform(self, data, fitting=True):
         """Transform human-readable data into TGAN numerical features.
@@ -333,19 +417,23 @@ class Preprocessor:
 
         for col in self.columns_order:
             if col in self.continuous_columns:
+                logger.info("Encoding continuous variable \"{}\"...".format(col))
+
                 column_data = data[col].values.reshape([-1, 1])
-                features, probs, means, stds = self.continous_transformer.transform(column_data)
+                features, probs, model, valid_comp_ind = self.continous_transformer.transform(column_data)
                 transformed_data[col] = np.concatenate((features, probs), axis=1)
 
                 if fitting:
                     details[col] = {
                         "type": "continuous",
-                        "means": means,
-                        "stds": stds,
-                        "n": 5
+                        "n": valid_comp_ind.sum(),
+                        "transform": model,
+                        "transform_aux": valid_comp_ind
                     }
 
             else:
+                logger.info("Encoding categorical variable \"{}\"...".format(col))
+
                 column_data = data[col].astype(str).values
                 features = self.categorical_transformer.fit_transform(column_data)
                 transformed_data[col] = features.reshape([-1, 1])
@@ -361,7 +449,7 @@ class Preprocessor:
         if fitting:
             metadata = {
                 "num_features": num_cols,
-                "details": details
+                "details": details,
             }
             check_metadata(metadata)
             self.metadata = metadata
@@ -387,7 +475,7 @@ class Preprocessor:
         self.fit_transform(data)
 
     def reverse_transform(self, data):
-        """Transform TGAN numerical features back into human-readable data.
+        """Transform DATGAN numerical features back into human-readable data.
 
         Args:
             data(pandas.DataFrame): Data to transform.
@@ -415,34 +503,3 @@ class Preprocessor:
         result = pd.DataFrame(dict(enumerate(table)))
         result.columns = self.columns
         return result
-
-
-def load_demo_data(name, header=None):
-    """Fetch, load and prepare a dataset.
-
-    If name is one of the demo datasets
-
-
-    Args:
-        name(str): Name or path of the dataset.
-        header(): Header parameter when executing :attr:`pandas.read_csv`
-
-    """
-    params = DEMO_DATASETS.get(name)
-    if params:
-        url, file_path, continuous_columns = params
-        if not os.path.isfile(file_path):
-            base_path = os.path.dirname(file_path)
-            if not os.path.exists(base_path):
-                os.makedirs(base_path)
-
-            urllib.request.urlretrieve(url, file_path)
-
-    else:
-        message = (
-            '{} is not a valid dataset name. '
-            'Supported values are: {}.'.format(name, list(DEMO_DATASETS.keys()))
-        )
-        raise ValueError(message)
-
-    return pd.read_csv(file_path, header=header), continuous_columns

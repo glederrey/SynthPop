@@ -18,9 +18,9 @@ import numpy as np
 from tensorpack import BatchData, ModelSaver, PredictConfig, QueueInput, SaverRestore, SimpleDatasetPredictor
 from tensorpack.utils import logger
 
-from modules.datgan_scalar.data import Preprocessor, RandomZData, DATGANDataFlow
-from modules.datgan_scalar.trainer import GANTrainer
-from modules.datgan_scalar.graph import GraphBuilder
+from modules.datgan_simu_wass.data import Preprocessor, RandomZData, DATGANDataFlow
+from modules.datgan_simu_wass.trainer import GANTrainer, SeparateGANTrainer
+from modules.datgan_simu_wass.graph import GraphBuilder
 
 import networkx as nx
 
@@ -103,12 +103,9 @@ class DATGAN:
         self.optimizer = optimizer
 
         # DATGAN parameters for continuous variable
-        self.simulating = True
         self.encoding = 'DATGAN'
         self.std_span = 2
         self.max_clusters = 10
-        # Can be TGAN, simple or complex
-        self.structure = 'TGAN'
 
         if gpu:
             os.environ['CUDA_VISIBLE_DEVICES'] = gpu
@@ -130,9 +127,7 @@ class DATGAN:
             num_dis_layers=self.num_dis_layers,
             num_dis_hidden=self.num_dis_hidden,
             optimizer=self.optimizer,
-            training=training,
-            simulating=self.simulating,
-            structure=self.structure
+            training=training
         )
 
     def fit(self, data, dag):
@@ -196,9 +191,10 @@ class DATGAN:
 
         self.model = self.get_model(training=True)
 
-        trainer = GANTrainer(
+        trainer = SeparateGANTrainer(
+            input=input_queue,
             model=self.model,
-            input_queue=input_queue,
+            g_period=5
         )
 
         # Checking if previous training already exists
@@ -289,12 +285,13 @@ class DATGAN:
 
             elif col_info['type'] == 'continuous':
 
-                val = results[:, ptr:ptr + 1]
-                ptr += 1
+                n_modes = col_info['n']
 
-                gaussian_components = col_info['n']
-                pro = results[:, ptr:ptr + gaussian_components]
-                ptr += gaussian_components
+                val = results[:, ptr:ptr + n_modes]
+                ptr += n_modes
+
+                pro = results[:, ptr:ptr + n_modes]
+                ptr += n_modes
 
                 features[col] = np.concatenate([val, pro], axis=1)
 

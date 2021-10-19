@@ -35,8 +35,7 @@ class GraphBuilder(ModelDescBase):
         num_dis_layers=1,
         num_dis_hidden=100,
         optimizer='AdamOptimizer',
-        training=True,
-        simulating=None
+        training=True
     ):
         """Initialize the object, set arguments as attributes."""
         self.metadata = metadata
@@ -52,7 +51,6 @@ class GraphBuilder(ModelDescBase):
         self.num_dis_hidden = num_dis_hidden
         self.optimizer = optimizer
         self.training = training
-        self.simulating = simulating
 
     def collect_variables(self, g_scope='gen', d_scope='discrim'):
         """
@@ -72,7 +70,7 @@ class GraphBuilder(ModelDescBase):
         if not (self.g_vars or self.d_vars):
             raise ValueError('There are no variables defined in some of the given scopes')
 
-    def build_losses(self, logits_real, logits_fake, extra_g=0, l2_norm=0.00001):
+    def build_losses(self, vecs_real, vecs_fake):
         r"""
         D and G play two-player minimax game with value function :math:`V(G,D)`.
 
@@ -91,6 +89,14 @@ class GraphBuilder(ModelDescBase):
             None
 
         """
+
+        kl = self.kl_loss(vecs_real, vecs_fake)
+
+        with tf.variable_scope('discrim'):
+            logits_real = self.discriminator(vecs_real)
+            logits_fake = self.discriminator(vecs_fake)
+
+
         with tf.name_scope("GAN_loss"):
             score_real = tf.sigmoid(logits_real)
             score_fake = tf.sigmoid(logits_fake)
@@ -119,7 +125,7 @@ class GraphBuilder(ModelDescBase):
 
                 d_loss = 0.5 * d_loss_pos + 0.5 * d_loss_neg + \
                     tf.contrib.layers.apply_regularization(
-                        tf.contrib.layers.l2_regularizer(l2_norm),
+                        tf.contrib.layers.l2_regularizer(self.l2norm),
                         tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "discrim"))
 
                 self.d_loss = tf.identity(d_loss, name='loss')
@@ -128,11 +134,11 @@ class GraphBuilder(ModelDescBase):
                 g_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
                     logits=logits_fake, labels=tf.ones_like(logits_fake))) + \
                     tf.contrib.layers.apply_regularization(
-                        tf.contrib.layers.l2_regularizer(l2_norm),
+                        tf.contrib.layers.l2_regularizer(self.l2norm),
                         tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'gen'))
 
                 g_loss = tf.identity(g_loss, name='loss')
-                extra_g = tf.identity(extra_g, name='klloss')
+                extra_g = tf.identity(kl, name='klloss')
                 self.g_loss = tf.identity(g_loss + extra_g, name='final-g-loss')
 
             add_moving_summary(
@@ -594,6 +600,30 @@ class GraphBuilder(ModelDescBase):
         """
         return tf.reduce_sum((tf.log(pred + 1e-4) - tf.log(real + 1e-4)) * pred)
 
+    def kl_loss(self, vecs_real, vecs_fake):
+        # KL loss
+        KL = 0.0
+        ptr = 0
+        if self.training:
+            # Go through all variables
+            for col_id, col in enumerate(self.metadata['details'].keys()):
+                # Get info
+                col_info = self.metadata['details'][col]
+
+                if col_info['type'] == 'continuous':
+                    # Skip the value. We only compute the KL on the probability vector
+                    ptr += 1
+
+                dist = tf.reduce_sum(vecs_fake[ptr], axis=0)
+                dist = dist / tf.reduce_sum(dist)
+
+                real = tf.reduce_sum(vecs_real[ptr], axis=0)
+                real = real / tf.reduce_sum(real)
+                KL += self.compute_kl(real, dist)
+                ptr += 1
+
+        return KL
+
     def build_graph(self, *inputs):
         """Build the whole graph.
 
@@ -613,8 +643,9 @@ class GraphBuilder(ModelDescBase):
         with tf.variable_scope('gen'):
             vecs_gen = self.generator(z)
 
-            vecs_res = []
-            vecs_neg = []
+            vecs_output = []
+            vecs_fake = []
+            vecs_real = []
             ptr = 0
             # Go through all variables
             for col_id, col in enumerate(self.metadata['details'].keys()):
@@ -623,110 +654,49 @@ class GraphBuilder(ModelDescBase):
 
                 if col_info['type'] == 'category':
 
-                    res_tensor = tf.reshape(tf.random.categorical(tf.math.log(vecs_gen[ptr]), 1), [-1])
-                    #res_tensor = tf.argmax(vecs_gen[ptr], axis=1)
+                    # OUTPUT
+                    #res_tensor = tf.reshape(tf.random.categorical(tf.math.log(vecs_gen[ptr]), 1), [-1])
+                    res_tensor = tf.argmax(vecs_gen[ptr], axis=1)
 
                     res_tensor = tf.cast(tf.reshape(res_tensor, [-1, 1]), 'float32')
-                    vecs_res.append(res_tensor)
+                    vecs_output.append(res_tensor)
 
+                    # FAKE
                     val = vecs_gen[ptr]
+                    """
                     if self.training:
                         noise = tf.random_uniform(tf.shape(val), minval=0, maxval=self.noise)
                         val = (val + noise) / tf.reduce_sum(val + noise, keepdims=True, axis=1)
-                    vecs_neg.append(val)
+                    """
+                    vecs_fake.append(val)
+
+                    # REAL
+                    one_hot = tf.one_hot(tf.reshape(inputs[ptr], [-1]), col_info['n'])
+
+                    if self.training:
+                        noise = tf.random_uniform(tf.shape(one_hot), minval=0, maxval=self.noise)
+                        one_hot = (one_hot + noise) / tf.reduce_sum(
+                            one_hot + noise, keepdims=True, axis=1)
+
+                    vecs_real.append(one_hot)
 
                     ptr += 1
 
                 elif col_info['type'] == 'continuous':
-                    vecs_res.append(vecs_gen[ptr])
-                    vecs_neg.append(vecs_gen[ptr])
+                    vecs_output.append(vecs_gen[ptr])
+                    vecs_fake.append(vecs_gen[ptr])
+                    vecs_real.append(inputs[ptr])
                     ptr += 1
 
-                    vecs_res.append(vecs_gen[ptr])
-                    vecs_neg.append(vecs_gen[ptr])
+                    vecs_output.append(vecs_gen[ptr])
+                    vecs_fake.append(vecs_gen[ptr])
+                    vecs_real.append(inputs[ptr])
                     ptr += 1
-
-                else:
-                    raise ValueError(
-                        "self.metadata['details'][{}]['type'] must be either `category` or "
-                        "`continuous`. Instead it was {}.".format(col_id, col_info['type'])
-                    )
 
             # This weird thing is then used for sampling the generator once it has been trained.
-            tf.identity(tf.concat(vecs_res, axis=1), name='gen')
+            tf.identity(tf.concat(vecs_output, axis=1), name='gen')
 
-        vecs_pos = []
-        ptr = 0
-        # Go through all variables
-        for col_id, col in enumerate(self.metadata['details'].keys()):
-            # Get info
-            col_info = self.metadata['details'][col]
-
-            if col_info['type'] == 'category':
-                # inputs[ptr] is a vector containing the index of the chosen category
-                one_hot = tf.one_hot(tf.reshape(inputs[ptr], [-1]), col_info['n'])
-
-                if self.training:
-                    noise = tf.random_uniform(tf.shape(one_hot), minval=0, maxval=self.noise)
-                    one_hot = (one_hot + noise) / tf.reduce_sum(
-                        one_hot + noise, keepdims=True, axis=1)
-
-                vecs_pos.append(one_hot)
-
-                ptr += 1
-
-            elif col_info['type'] == 'continuous':
-                # continuous value in the mixture
-                vecs_pos.append(inputs[ptr])
-                ptr += 1
-
-                vecs_pos.append(inputs[ptr])
-                ptr += 1
-
-            else:
-                raise ValueError(
-                    "self.metadata['details'][{}]['type'] must be either `category` or "
-                    "`continuous`. Instead it was {}.".format(col_id, col_info['type'])
-                )
-
-        KL = 0.0
-        ptr = 0
-        if self.training:
-            # Go through all variables
-            for col_id, col in enumerate(self.metadata['details'].keys()):
-                # Get info
-                col_info = self.metadata['details'][col]
-
-                if col_info['type'] == 'category':
-                    dist = tf.reduce_sum(vecs_neg[ptr], axis=0)
-                    dist = dist / tf.reduce_sum(dist)
-
-                    real = tf.reduce_sum(vecs_pos[ptr], axis=0)
-                    real = real / tf.reduce_sum(real)
-                    KL += self.compute_kl(real, dist)
-                    ptr += 1
-
-                elif col_info['type'] == 'continuous':
-                    ptr += 1
-                    dist = tf.reduce_sum(vecs_neg[ptr], axis=0)
-                    dist = dist / tf.reduce_sum(dist)
-
-                    real = tf.reduce_sum(vecs_pos[ptr], axis=0)
-                    real = real / tf.reduce_sum(real)
-                    KL += self.compute_kl(real, dist)
-                    ptr += 1
-
-                else:
-                    raise ValueError(
-                        "self.metadata['details'][{}]['type'] must be either `category` or "
-                        "`continuous`. Instead it was {}.".format(col_id, col_info['type'])
-                    )
-
-        with tf.variable_scope('discrim'):
-            discrim_pos = self.discriminator(vecs_pos)
-            discrim_neg = self.discriminator(vecs_neg)
-
-        self.build_losses(discrim_pos, discrim_neg, extra_g=KL, l2_norm=self.l2norm)
+        self.build_losses(vecs_real, vecs_fake)
         self.collect_variables()
 
     def _get_optimizer(self):

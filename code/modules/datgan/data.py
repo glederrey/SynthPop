@@ -13,7 +13,7 @@ from sklearn.preprocessing import LabelEncoder
 from tensorpack import DataFlow, RNGDataFlow
 from tensorpack.utils import logger
 
-from modules.datgan.pers_homology import Peak, get_persistent_homology
+from modules.datgan_simu.pers_homology import Peak, get_persistent_homology
 
 
 def check_metadata(metadata):
@@ -216,15 +216,8 @@ class MultiModalNumberTransformer:
         """Initialize instance."""
         self.max_clusters = 10
         self.std_span = 2
-        # encoding can be 'TGAN', 'CTGAN' or 'DATGAN'
-        self.encoding = 'DATGAN'
-        self.simulating = False
-
-    def set_inputs(self, max_clusters, std_span, encoding, simulating):
-        self.max_clusters = max_clusters
-        self.std_span = std_span
-        self.encoding = encoding
-        self.simulating = simulating
+        self.n_bins = 50
+        self.thresh = 1e-3
 
     @check_inputs
     def transform(self, data):
@@ -242,85 +235,60 @@ class MultiModalNumberTransformer:
 
         """
 
-        if self.encoding is 'CTGAN':
+        # Transform data using the histogram function
+        hist = np.histogram(data, bins=self.n_bins, density=True)
+
+        # Use the persistent homology to find the number of peaks in the data
+        peaks = get_persistent_homology(hist[0])
+        pers = np.array([p.get_persistence(hist[0]) for p in peaks])
+
+        n_peaks = sum(pers > self.thresh) - 1
+
+        logger.info("  Found {} peaks!".format(n_peaks))
+
+        # Decide on the number of modes for the BGM
+        if n_peaks < 2:
+            n_modes = self.max_clusters
+        else:
+            n_modes = min(n_peaks, self.max_clusters)
+
+        logger.info("  Encoding with {} components.".format(n_modes))
+        while True:
+            # Fit the BGM
             model = BayesianGaussianMixture(
-                n_components=self.max_clusters,
+                n_components=n_modes,
+                max_iter=200,
+                n_init=10,
+                init_params='kmeans',
+                reg_covar=0,
                 weight_concentration_prior_type='dirichlet_process',
-                weight_concentration_prior=0.001,
-                n_init=1,
-                max_iter=100,
-                #random_state=13
-            )
+                mean_precision_prior=.8,
+                tol=1e-5,
+                weight_concentration_prior=1e-5)
             model.fit(data)
 
-            # Threshold used in CTGAN
-            valid_component_indicator = model.weights_ > 0.005
-            n_modes = self.max_clusters
-        elif self.encoding is 'TGAN':
-            model = GaussianMixture(self.max_clusters)
-            model.fit(data)
+            # Check that BGM is using all the classes!
+            pred_ = np.unique(model.predict(data))
 
-            valid_component_indicator = np.array([True]*self.max_clusters)
-            n_modes = self.max_clusters
-        elif self.encoding is 'DATGAN':
-
-            n_bins = 50
-            thresh = 1e-3
-
-            # Transform data using the histogram function
-            hist = np.histogram(data, bins=n_bins, density=True)
-
-            # Use the persistent homology to find the number of peaks in the data
-            peaks = get_persistent_homology(hist[0])
-            pers = np.array([p.get_persistence(hist[0]) for p in peaks])
-
-            n_peaks = sum(pers > thresh) - 1
-
-            logger.info("  Found {} peaks!".format(n_peaks))
-
-            # Decide on the number of modes for the BGM
-            if n_peaks < 2:
-                n_modes = self.max_clusters
+            if len(pred_) == n_modes:
+                logger.info("  Predictions were done on {:d} components => FINISHED!".format(n_modes))
+                valid_component_indicator = np.array([True] * n_modes)
+                break
             else:
-                n_modes = min(n_peaks, self.max_clusters)
-
-            logger.info("  Encoding with {} components.".format(n_modes))
-            while True:
-                # Fit the BGM
-                model = BayesianGaussianMixture(
-                    n_components=n_modes,
-                    max_iter=200,
-                    n_init=10,
-                    init_params='kmeans',
-                    reg_covar=0,
-                    weight_concentration_prior_type='dirichlet_process',
-                    mean_precision_prior=.8,
-                    tol=1e-5,
-                    weight_concentration_prior=1e-5)
-                model.fit(data)
-
-                # Check that BGM is using all the classes!
-                pred_ = np.unique(model.predict(data))
-
-                if len(pred_) == n_modes:
-                    logger.info("  Predictions were done on {:d} components => FINISHED!".format(n_modes))
-                    valid_component_indicator = np.array([True] * n_modes)
-                    break
-                else:
-                    n_modes = len(pred_)
-                    logger.info("  Predictions were done on only {:d} components => Simplification!".format(n_modes))
+                n_modes = len(pred_)
+                logger.info("  Predictions were done on only {:d} components => Simplification!".format(n_modes))
 
         means = model.means_.reshape((1, n_modes))
         stds = np.sqrt(model.covariances_).reshape((1, n_modes))
 
         # Fix this shitty normalization
-        normalized_values = ((data - means) / (self.std_span * stds))[:, valid_component_indicator]
-        probs = model.predict_proba(data)[:, valid_component_indicator]
+        normalized_values = ((data - means) / (self.std_span * stds))
+        probs = model.predict_proba(data)
 
         # Clip the values
         normalized_values = np.clip(normalized_values, -.99, .99)
 
-        return normalized_values, probs, model, valid_component_indicator
+        return normalized_values, probs, model, n_modes
 
     #@staticmethod
     def inverse_transform(self, data, info):
@@ -336,30 +304,24 @@ class MultiModalNumberTransformer:
         """
 
         gmm = info['transform']
-        valid_component_indicator = info['transform_aux']
         n_modes = info['n']
 
         normalized_values = data[:, :n_modes]
         probs = data[:, n_modes:]
 
-        if self.simulating:
-            selected_component = np.zeros(len(data), dtype='int')
-            for i in range(len(data)):
-                component_prob_t = probs[i] + 1e-6
-                component_prob_t = component_prob_t / component_prob_t.sum()
-                selected_component[i] = np.random.choice(
-                    np.arange(n_modes), p=component_prob_t)
-        else:
-            selected_component = np.argmax(probs, axis=1)
+        selected_component = np.zeros(len(data), dtype='int')
+        for i in range(len(data)):
+            component_prob_t = probs[i] + 1e-6
+            component_prob_t = component_prob_t / component_prob_t.sum()
+            selected_component[i] = np.random.choice(np.arange(n_modes), p=component_prob_t)
 
-        means = gmm.means_.reshape([-1])[valid_component_indicator]
-        stds = np.sqrt(gmm.covariances_).reshape([-1])[valid_component_indicator]
+        means = gmm.means_.reshape([-1])
+        stds = np.sqrt(gmm.covariances_).reshape([-1])
 
         mean_t = means[selected_component]
         std_t = stds[selected_component]
 
-        selected_normalized_value = normalized_values[
-            np.arange(len(data)), selected_component]
+        selected_normalized_value = normalized_values[np.arange(len(data)), selected_component]
 
         return selected_normalized_value * self.std_span * std_t + mean_t
 
@@ -395,9 +357,6 @@ class Preprocessor:
         self.categorical_transformer = LabelEncoder()
         self.columns = None
 
-    def set_inputs(self, max_clusters, std_span, encoding, simulating):
-        self.continous_transformer.set_inputs(max_clusters, std_span, encoding, simulating)
-
     def fit_transform(self, data, fitting=True):
         """Transform human-readable data into TGAN numerical features.
 
@@ -420,17 +379,15 @@ class Preprocessor:
                 logger.info("Encoding continuous variable \"{}\"...".format(col))
 
                 column_data = data[col].values.reshape([-1, 1])
-                features, probs, model, valid_comp_ind = self.continous_transformer.transform(column_data)
+                features, probs, model, n_modes = self.continous_transformer.transform(column_data)
                 transformed_data[col] = np.concatenate((features, probs), axis=1)
 
                 if fitting:
                     details[col] = {
                         "type": "continuous",
-                        "n": valid_comp_ind.sum(),
+                        "n": n_modes,
                         "transform": model,
-                        "transform_aux": valid_comp_ind
                     }
-
             else:
                 logger.info("Encoding categorical variable \"{}\"...".format(col))
 

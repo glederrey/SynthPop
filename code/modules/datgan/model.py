@@ -102,12 +102,6 @@ class DATGAN:
         self.num_dis_hidden = num_dis_hidden
         self.optimizer = optimizer
 
-        # DATGAN parameters for continuous variable
-        self.simulating = True
-        self.encoding = 'DATGAN'
-        self.std_span = 2
-        self.max_clusters = 10
-
         if gpu:
             os.environ['CUDA_VISIBLE_DEVICES'] = gpu
 
@@ -128,8 +122,7 @@ class DATGAN:
             num_dis_layers=self.num_dis_layers,
             num_dis_hidden=self.num_dis_hidden,
             optimizer=self.optimizer,
-            training=training,
-            simulating=self.simulating
+            training=training
         )
 
     def fit(self, data, dag):
@@ -170,7 +163,6 @@ class DATGAN:
             logger.info("Preprocessing the data!")
 
             self.preprocessor = Preprocessor(continuous_columns=self.continuous_columns, columns_order=self.var_order)
-            self.preprocessor.set_inputs(self.max_clusters, self.std_span, self.encoding, self.simulating)
             transformed_data = self.preprocessor.fit_transform(data)
 
             # Save the preprocessor and the data
@@ -449,6 +441,6 @@ class DATGAN:
 
             plt.xlabel('$x$')
             plt.ylabel('$p(x)$')
-            plt.title("{} - {} mixtures".format(col, np.sum(details['transform_aux'])))
+            plt.title("{} - {} mixtures".format(col, details['n']))
             plt.savefig(path + '/{}.png'.format(col), bbox_inches='tight', facecolor='white')
             plt.close(fig)
