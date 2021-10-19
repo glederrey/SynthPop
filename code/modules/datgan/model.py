@@ -107,8 +107,6 @@ class DATGAN:
         self.encoding = 'DATGAN'
         self.std_span = 2
         self.max_clusters = 10
-        # Can be TGAN, simple or complex
-        self.structure = 'TGAN'
 
         if gpu:
             os.environ['CUDA_VISIBLE_DEVICES'] = gpu
@@ -131,8 +129,7 @@ class DATGAN:
             num_dis_hidden=self.num_dis_hidden,
             optimizer=self.optimizer,
             training=training,
-            simulating=self.simulating,
-            structure=self.structure
+            simulating=self.simulating
         )
 
     def fit(self, data, dag):

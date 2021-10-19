@@ -36,8 +36,7 @@ class GraphBuilder(ModelDescBase):
         num_dis_hidden=100,
         optimizer='AdamOptimizer',
         training=True,
-        simulating=None,
-        structure=None
+        simulating=None
     ):
         """Initialize the object, set arguments as attributes."""
         self.metadata = metadata
@@ -54,10 +53,6 @@ class GraphBuilder(ModelDescBase):
         self.optimizer = optimizer
         self.training = training
         self.simulating = simulating
-        self.structure = structure
-
-        if structure not in ["TGAN", "simple", "complex"]:
-            raise ValueError("Wrong value for variable named 'structure'!")
 
     def collect_variables(self, g_scope='gen', d_scope='discrim'):
         """
@@ -427,7 +422,16 @@ class GraphBuilder(ModelDescBase):
                 tmp_outputs.append(w_val)
                 tmp_outputs.append(w_prob)
 
-                tmp_input = FullyConnected('FC3', tf.concat([w_val, w_prob], axis=1),
+                vec_ws = [w_val, w_prob]
+
+                """
+                # Add the choice in the vector w.
+                w_dec = tf.reshape(tf.random.categorical(tf.math.log(w_prob), 1), [-1])
+                one_hot = tf.one_hot(w_dec, col_info['n'])
+                vec_ws.append(tf.cast(one_hot, dtype='float32'))
+                """
+
+                tmp_input = FullyConnected('FC3', tf.concat(vec_ws, axis=1),
                                            self.num_gen_feature, nl=tf.identity)
                 attw = tf.get_variable("attw", shape=(len(prev_states), 1, 1))
                 attw = tf.nn.softmax(attw, axis=0)
@@ -445,16 +449,17 @@ class GraphBuilder(ModelDescBase):
                 w = FullyConnected('FC2', h, col_info['n'], nl=tf.nn.softmax)
                 tmp_outputs.append(w)
 
-                """
-                if self.simulating:
-                    res_tensor = tf.reshape(tf.random.categorical(tf.math.log(w), 1), [-1])
-                else:
-                    res_tensor = tf.argmax(w, axis=1)
-                """
-                res_tensor = tf.argmax(w, axis=1)
+                tmp_input = FullyConnected('FC3', w, self.num_gen_feature, nl=tf.identity)
 
-                one_hot = tf.one_hot(res_tensor, col_info['n'])
-                tmp_input = FullyConnected('FC3', one_hot, self.num_gen_feature, nl=tf.identity)
+                # res_tensor = tf.reshape(tf.random.categorical(tf.math.log(w), 1), [-1])
+                # res_tensor = tf.argmax(w, axis=1)
+
+                #one_hot = tf.one_hot(res_tensor, col_info['n'])
+
+                #tmp_input = FullyConnected('FC3', one_hot, self.num_gen_feature, nl=tf.identity)
+
+                #vec_ws = [w, one_hot]
+                #tmp_input = FullyConnected('FC3', tf.concat(vec_ws, axis=1), self.num_gen_feature, nl=tf.identity)
 
                 attw = tf.get_variable("attw", shape=(len(prev_states), 1, 1))
                 attw = tf.nn.softmax(attw, axis=0)
@@ -604,10 +609,12 @@ class GraphBuilder(ModelDescBase):
 
         z = tf.placeholder_with_default(z, [None, self.z_dim], name='z')
 
+        # Create the output for the model
         with tf.variable_scope('gen'):
             vecs_gen = self.generator(z)
 
-            vecs_denorm = []
+            vecs_res = []
+            vecs_neg = []
             ptr = 0
             # Go through all variables
             for col_id, col in enumerate(self.metadata['details'].keys()):
@@ -616,23 +623,27 @@ class GraphBuilder(ModelDescBase):
 
                 if col_info['type'] == 'category':
 
-                    """
-                    if self.simulating:
-                        t = tf.reshape(tf.random.categorical(tf.math.log(vecs_gen[ptr]), 1), [-1])
-                    else:
-                        t = tf.argmax(vecs_gen[ptr], axis=1)
-                    """
-                    t = tf.argmax(vecs_gen[ptr], axis=1)
+                    res_tensor = tf.reshape(tf.random.categorical(tf.math.log(vecs_gen[ptr]), 1), [-1])
+                    #res_tensor = tf.argmax(vecs_gen[ptr], axis=1)
 
-                    t = tf.cast(tf.reshape(t, [-1, 1]), 'float32')
-                    vecs_denorm.append(t)
+                    res_tensor = tf.cast(tf.reshape(res_tensor, [-1, 1]), 'float32')
+                    vecs_res.append(res_tensor)
+
+                    val = vecs_gen[ptr]
+                    if self.training:
+                        noise = tf.random_uniform(tf.shape(val), minval=0, maxval=self.noise)
+                        val = (val + noise) / tf.reduce_sum(val + noise, keepdims=True, axis=1)
+                    vecs_neg.append(val)
+
                     ptr += 1
 
                 elif col_info['type'] == 'continuous':
-                    vecs_denorm.append(vecs_gen[ptr])
+                    vecs_res.append(vecs_gen[ptr])
+                    vecs_neg.append(vecs_gen[ptr])
                     ptr += 1
 
-                    vecs_denorm.append(vecs_gen[ptr])
+                    vecs_res.append(vecs_gen[ptr])
+                    vecs_neg.append(vecs_gen[ptr])
                     ptr += 1
 
                 else:
@@ -642,7 +653,7 @@ class GraphBuilder(ModelDescBase):
                     )
 
             # This weird thing is then used for sampling the generator once it has been trained.
-            tf.identity(tf.concat(vecs_denorm, axis=1), name='gen')
+            tf.identity(tf.concat(vecs_res, axis=1), name='gen')
 
         vecs_pos = []
         ptr = 0
@@ -652,15 +663,16 @@ class GraphBuilder(ModelDescBase):
             col_info = self.metadata['details'][col]
 
             if col_info['type'] == 'category':
+                # inputs[ptr] is a vector containing the index of the chosen category
                 one_hot = tf.one_hot(tf.reshape(inputs[ptr], [-1]), col_info['n'])
-                noise_input = one_hot
 
                 if self.training:
                     noise = tf.random_uniform(tf.shape(one_hot), minval=0, maxval=self.noise)
-                    noise_input = (one_hot + noise) / tf.reduce_sum(
+                    one_hot = (one_hot + noise) / tf.reduce_sum(
                         one_hot + noise, keepdims=True, axis=1)
 
-                vecs_pos.append(noise_input)
+                vecs_pos.append(one_hot)
+
                 ptr += 1
 
             elif col_info['type'] == 'continuous':
@@ -686,7 +698,7 @@ class GraphBuilder(ModelDescBase):
                 col_info = self.metadata['details'][col]
 
                 if col_info['type'] == 'category':
-                    dist = tf.reduce_sum(vecs_gen[ptr], axis=0)
+                    dist = tf.reduce_sum(vecs_neg[ptr], axis=0)
                     dist = dist / tf.reduce_sum(dist)
 
                     real = tf.reduce_sum(vecs_pos[ptr], axis=0)
@@ -696,7 +708,7 @@ class GraphBuilder(ModelDescBase):
 
                 elif col_info['type'] == 'continuous':
                     ptr += 1
-                    dist = tf.reduce_sum(vecs_gen[ptr], axis=0)
+                    dist = tf.reduce_sum(vecs_neg[ptr], axis=0)
                     dist = dist / tf.reduce_sum(dist)
 
                     real = tf.reduce_sum(vecs_pos[ptr], axis=0)
@@ -712,7 +724,7 @@ class GraphBuilder(ModelDescBase):
 
         with tf.variable_scope('discrim'):
             discrim_pos = self.discriminator(vecs_pos)
-            discrim_neg = self.discriminator(vecs_gen)
+            discrim_neg = self.discriminator(vecs_neg)
 
         self.build_losses(discrim_pos, discrim_neg, extra_g=KL, l2_norm=self.l2norm)
         self.collect_variables()
