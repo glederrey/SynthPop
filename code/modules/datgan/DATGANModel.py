@@ -701,7 +701,7 @@ class DATGANModel(ModelDescBase):
 
     def _get_optimizer(self):
         if self.optimizer == 'AdamOptimizer':
-            return tf.train.AdamOptimizer(self.learning_rate, 0.5)
+            return tf.train.AdamOptimizer(self.learning_rate, beta1=0.5, beta2=0.9)
 
         elif self.optimizer == 'AdadeltaOptimizer':
             return tf.train.AdadeltaOptimizer(self.learning_rate, 0.95)

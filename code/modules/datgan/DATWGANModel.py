@@ -76,14 +76,14 @@ class DATWGANModel(DATGANModel):
             tensorpack.FullyConected: a (b, 1) logits
 
         """
-        logits = tf.concat(vecs, axis=1)
+        logits = tf.identity(vecs)
         for i in range(self.num_dis_layers):
             with tf.variable_scope('dis_fc{}'.format(i)):
                 """
                 if i == 0:
                     logits = FullyConnected(
                         'fc', logits, self.num_dis_hidden, nl=tf.identity,
-                        kernel_initializer=tf.truncated_normal_initializer(stddev=0.1)
+                        kernel_initializer=tf.truncated_normal_initializer(stddev=0.02)
                     )
 
                 else:
@@ -92,9 +92,8 @@ class DATWGANModel(DATGANModel):
                 logits = FullyConnected('fc', logits, self.num_dis_hidden, nl=tf.identity)
 
                 logits = tf.concat([logits, self.batch_diversity(logits)], axis=1)
-                logits = Dropout(logits)
                 logits = LayerNorm('ln', logits)
-                #logits = BatchNorm('bn', logits, center=True, scale=False)
+                logits = Dropout(logits)
                 logits = tf.nn.leaky_relu(logits)
 
         return FullyConnected('dis_fc_top', logits, 1, nl=tf.identity)
@@ -111,38 +110,47 @@ class DATWGANModel(DATGANModel):
             None
 
         """
+        kl = self.kl_loss(vecs_real, vecs_fake)
+
+        # Transform list of tensors into a concatenated tensor
+        vecs_real = tf.concat(vecs_real, axis=1)
+        vecs_fake = tf.concat(vecs_fake, axis=1)
+
+        alpha = tf.random_uniform(shape=[self.batch_size, 1], minval=0., maxval=1.)
+
+        # Compute diff between real and fake data
+        vecs_interp = vecs_real + alpha * (vecs_fake - vecs_real)
 
         with tf.variable_scope('discrim'):
             d_logit_real = self.discriminator(vecs_real)
             d_logit_fake = self.discriminator(vecs_fake)
+            d_logit_interp = self.discriminator(vecs_interp)
 
         with tf.name_scope("GAN_loss"):
 
             self.d_loss = tf.reduce_mean(d_logit_fake - d_logit_real, name='d_loss')
             self.g_loss = tf.negative(tf.reduce_mean(d_logit_fake), name='g_loss')
 
-            gradients_rms, gradient_penalty = self.gradient_penalty(vecs_real, vecs_fake)
+            # the gradient penalty loss
+            gradients = tf.gradients(d_logit_interp, vecs_interp)[0]
+            gradients = tf.sqrt(tf.reduce_sum(tf.square(gradients), [1]))
+            gradients_rms = tf.sqrt(tf.reduce_mean(tf.square(gradients)), name='gradient_rms')
+            gradient_penalty = tf.reduce_mean(tf.square(gradients - 1), name='gradient_penalty')
 
-            add_moving_summary(self.d_loss, self.g_loss, gradient_penalty, gradients_rms)
+            kl = tf.identity(kl, name='kl_div')
+            add_moving_summary(self.d_loss, self.g_loss, gradient_penalty, gradients_rms, kl)
 
             self.d_loss = tf.add(self.d_loss, self.lambda_ * gradient_penalty)
+            self.g_loss = tf.add(self.g_loss, kl)
 
-    def gradient_penalty(self, vecs_real, vecs_fake):
-        """ Gradient penalty for WGAN-GP loss """
-        alpha = tf.random_uniform(shape=[self.batch_size, 1], minval=0., maxval=1.)
+            """
+            self.d_loss = tf.add(self.d_loss, self.lambda_ * gradient_penalty) + \
+                tf.contrib.layers.apply_regularization(
+                    tf.contrib.layers.l2_regularizer(self.l2norm),
+                    tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "discrim"))
 
-        # Compute diff between real and fake data
-        vecs_interp = []
-        for f, r in zip(vecs_fake, vecs_real):
-            vecs_interp.append(alpha*r + (1-alpha)*f)
-
-        with tf.variable_scope('discrim'):
-            d_logit_interp = self.discriminator(vecs_interp)
-
-        # the gradient penalty loss
-        gradients = tf.gradients(d_logit_interp, vecs_interp)[0]
-        gradients = tf.sqrt(tf.reduce_sum(tf.square(gradients), [1]))
-        gradients_rms = tf.sqrt(tf.reduce_mean(tf.square(gradients)), name='gradient_rms')
-        gradient_penalty = tf.reduce_mean(tf.square(gradients - 1), name='gradient_penalty')
-
-        return gradients_rms, gradient_penalty
+            self.g_loss = tf.add(self.g_loss, kl) + \
+                tf.contrib.layers.apply_regularization(
+                    tf.contrib.layers.l2_regularizer(self.l2norm),
+                    tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "gen"))
+            """

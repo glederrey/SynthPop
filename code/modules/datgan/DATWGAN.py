@@ -9,10 +9,12 @@ This module contains two classes:
 - :attr:`TGANModel`: The public API for the model, that offers a simplified interface for the
   underlying operations with GraphBuilder and trainers in order to fit and sample data.
 """
+from functools import partial
 
 from modules.datgan.trainer import SeparateGANTrainer
 from modules.datgan.DATWGANModel import DATWGANModel
 from modules.datgan.DATGAN import DATGAN
+
 
 
 class DATWGAN(DATGAN):
@@ -52,7 +54,7 @@ class DATWGAN(DATGAN):
 
     def __init__(self, continuous_columns, output='output', gpu=None, max_epoch=5, steps_per_epoch=None,
                  save_checkpoints=True, restore_session=True, batch_size=200, z_dim=200, noise=0.2,
-                 l2norm=0.00001, learning_rate=0.001, num_gen_rnn=100, num_gen_feature=100,
+                 l2norm=0.00001, learning_rate=1e-3, num_gen_rnn=100, num_gen_feature=100,
                  num_dis_layers=1, num_dis_hidden=100, optimizer='AdamOptimizer', lambda_=10):
 
         super().__init__(continuous_columns, output, gpu, max_epoch, steps_per_epoch, save_checkpoints,
@@ -60,8 +62,8 @@ class DATWGAN(DATGAN):
                          num_gen_feature, num_dis_layers, num_dis_hidden, optimizer)
 
         self.lambda_ = lambda_
-        # What changes between DATGAN and DATWGAN
-        self.trainer = SeparateGANTrainer
+        # We use a separate trainer for the DATWGAN to train the discirminator more often
+        self.trainer = partial(SeparateGANTrainer, g_period=5)
 
     def get_model(self, training=True):
         """Return a new instance of the model."""

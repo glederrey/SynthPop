@@ -87,10 +87,8 @@ class SeparateGANTrainer(TowerTrainer):
 
         opt = model.get_optimizer()
         with tf.name_scope('optimize'):
-            self.d_min = opt.minimize(
-                model.d_loss, var_list=model.d_vars, name='d_min')
-            self.g_min = opt.minimize(
-                model.g_loss, var_list=model.g_vars, name='g_min')
+            self.d_min = opt.minimize(model.d_loss, var_list=model.d_vars, name='d_min')
+            self.g_min = opt.minimize(model.g_loss, var_list=model.g_vars, name='g_min')
 
     def run_step(self):
         """Define the training iteration."""
