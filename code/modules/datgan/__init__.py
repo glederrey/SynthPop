@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 
-"""Top-level package for TGAN."""
+"""Top-level package for DATGAN."""
 
-__author__ = """MIT Data To AI Lab"""
-__email__ = 'dailabmit@gmail.com'
+__author__ = """Gael Lederrey @ EPFL"""
+__email__ = 'gael.lederrey@epfl.ch'
 __version__ = '0.1.1-dev'
+
+from .DATGAN import DATGAN
+from .DATWGAN import DATWGAN

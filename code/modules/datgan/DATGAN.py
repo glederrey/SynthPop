@@ -20,7 +20,7 @@ from tensorpack.utils import logger
 
 from modules.datgan.data import Preprocessor, RandomZData, DATGANDataFlow
 from modules.datgan.trainer import GANTrainer
-from modules.datgan.graph import GraphBuilder
+from modules.datgan.DATGANModel import DATGANModel
 
 import networkx as nx
 
@@ -31,7 +31,7 @@ import seaborn as sns
 sns.set_style("whitegrid")
 
 class DATGAN:
-    """Main model from TGAN.
+    """Main model for DATGAN.
 
     Args:
         continuous_columns (list[int]): 0-index list of column indices to be considered continuous.
@@ -107,9 +107,12 @@ class DATGAN:
 
         self.gpu = gpu
 
+        # What changes between DATGAN and DATWGAN
+        self.trainer = GANTrainer
+
     def get_model(self, training=True):
         """Return a new instance of the model."""
-        return GraphBuilder(
+        return DATGANModel(
             metadata=self.metadata,
             dag=self.dag,
             batch_size=self.batch_size,
@@ -185,9 +188,9 @@ class DATGAN:
 
         self.model = self.get_model(training=True)
 
-        trainer = GANTrainer(
-            model=self.model,
-            input_queue=input_queue,
+        trainer = self.trainer(
+            input=input_queue,
+            model=self.model
         )
 
         # Checking if previous training already exists
@@ -229,7 +232,7 @@ class DATGAN:
             session_init=SaverRestore(self.restore_path),
             model=self.model,
             input_names=['z'],
-            output_names=['gen/gen', 'z'],
+            output_names=['output', 'z'],
         )
 
         self.simple_dataset_predictor = SimpleDatasetPredictor(

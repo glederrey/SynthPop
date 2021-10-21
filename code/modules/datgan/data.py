@@ -8,12 +8,12 @@ import urllib
 
 import numpy as np
 import pandas as pd
-from sklearn.mixture import BayesianGaussianMixture, GaussianMixture
+from sklearn.mixture import BayesianGaussianMixture
 from sklearn.preprocessing import LabelEncoder
 from tensorpack import DataFlow, RNGDataFlow
 from tensorpack.utils import logger
 
-from modules.datgan_simu.pers_homology import Peak, get_persistent_homology
+from modules.datgan.utils import get_persistent_homology
 
 
 def check_metadata(metadata):

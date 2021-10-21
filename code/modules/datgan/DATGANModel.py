@@ -10,7 +10,7 @@ from tensorpack.utils import logger
 import networkx as nx
 
 
-class GraphBuilder(ModelDescBase):
+class DATGANModel(ModelDescBase):
     """
     Main model for DATGAN.
 
@@ -69,80 +69,6 @@ class GraphBuilder(ModelDescBase):
 
         if not (self.g_vars or self.d_vars):
             raise ValueError('There are no variables defined in some of the given scopes')
-
-    def build_losses(self, vecs_real, vecs_fake):
-        r"""
-        D and G play two-player minimax game with value function :math:`V(G,D)`.
-
-        .. math::
-
-            min_G max_D V(D, G) = IE_{x \sim p_{data}} [log D(x)] + IE_{z \sim p_{fake}}
-                [log (1 - D(G(z)))]
-
-        Args:
-            logits_real (tensorflow.Tensor): discrim logits from real samples.
-            logits_fake (tensorflow.Tensor): discrim logits from fake samples from generator.
-            extra_g(float):
-            l2_norm(float): scale to apply L2 regularization.
-
-        Returns:
-            None
-
-        """
-
-        kl = self.kl_loss(vecs_real, vecs_fake)
-
-        with tf.variable_scope('discrim'):
-            logits_real = self.discriminator(vecs_real)
-            logits_fake = self.discriminator(vecs_fake)
-
-
-        with tf.name_scope("GAN_loss"):
-            score_real = tf.sigmoid(logits_real)
-            score_fake = tf.sigmoid(logits_fake)
-            tf.summary.histogram('score-real', score_real)
-            tf.summary.histogram('score-fake', score_fake)
-
-            with tf.name_scope("discrim"):
-                d_loss_pos = tf.reduce_mean(
-                    tf.nn.sigmoid_cross_entropy_with_logits(
-                        logits=logits_real,
-                        labels=tf.ones_like(logits_real)) * 0.7 + tf.random_uniform(
-                            tf.shape(logits_real),
-                            maxval=0.3
-                    ),
-                    name='loss_real'
-                )
-
-                d_loss_neg = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
-                    logits=logits_fake, labels=tf.zeros_like(logits_fake)), name='loss_fake')
-
-                d_pos_acc = tf.reduce_mean(
-                    tf.cast(score_real > 0.5, tf.float32), name='accuracy_real')
-
-                d_neg_acc = tf.reduce_mean(
-                    tf.cast(score_fake < 0.5, tf.float32), name='accuracy_fake')
-
-                d_loss = 0.5 * d_loss_pos + 0.5 * d_loss_neg + \
-                    tf.contrib.layers.apply_regularization(
-                        tf.contrib.layers.l2_regularizer(self.l2norm),
-                        tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "discrim"))
-
-                self.d_loss = tf.identity(d_loss, name='loss')
-
-            with tf.name_scope("gen"):
-                g_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
-                    logits=logits_fake, labels=tf.ones_like(logits_fake))) + \
-                    tf.contrib.layers.apply_regularization(
-                        tf.contrib.layers.l2_regularizer(self.l2norm),
-                        tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'gen'))
-
-                g_loss = tf.identity(g_loss, name='loss')
-                extra_g = tf.identity(kl, name='klloss')
-                self.g_loss = tf.identity(g_loss + extra_g, name='final-g-loss')
-
-            add_moving_summary(
-                g_loss, extra_g, self.g_loss, self.d_loss, d_pos_acc, d_neg_acc, decay=0.)
 
     @memoized
     def get_optimizer(self):
@@ -643,61 +569,135 @@ class GraphBuilder(ModelDescBase):
         with tf.variable_scope('gen'):
             vecs_gen = self.generator(z)
 
-            vecs_output = []
-            vecs_fake = []
-            vecs_real = []
-            ptr = 0
-            # Go through all variables
-            for col_id, col in enumerate(self.metadata['details'].keys()):
-                # Get info
-                col_info = self.metadata['details'][col]
+        vecs_output = []
+        vecs_fake = []
+        vecs_real = []
+        ptr = 0
+        # Go through all variables
+        for col_id, col in enumerate(self.metadata['details'].keys()):
+            # Get info
+            col_info = self.metadata['details'][col]
 
-                if col_info['type'] == 'category':
+            if col_info['type'] == 'category':
 
-                    # OUTPUT
-                    #res_tensor = tf.reshape(tf.random.categorical(tf.math.log(vecs_gen[ptr]), 1), [-1])
-                    res_tensor = tf.argmax(vecs_gen[ptr], axis=1)
+                # OUTPUT
+                #res_tensor = tf.reshape(tf.random.categorical(tf.math.log(vecs_gen[ptr]), 1), [-1])
+                res_tensor = tf.argmax(vecs_gen[ptr], axis=1)
 
-                    res_tensor = tf.cast(tf.reshape(res_tensor, [-1, 1]), 'float32')
-                    vecs_output.append(res_tensor)
+                res_tensor = tf.cast(tf.reshape(res_tensor, [-1, 1]), 'float32')
+                vecs_output.append(res_tensor)
 
-                    # FAKE
-                    val = vecs_gen[ptr]
-                    """
-                    if self.training:
-                        noise = tf.random_uniform(tf.shape(val), minval=0, maxval=self.noise)
-                        val = (val + noise) / tf.reduce_sum(val + noise, keepdims=True, axis=1)
-                    """
-                    vecs_fake.append(val)
+                # FAKE
+                val = vecs_gen[ptr]
+                """
+                if self.training:
+                    noise = tf.random_uniform(tf.shape(val), minval=0, maxval=self.noise)
+                    val = (val + noise) / tf.reduce_sum(val + noise, keepdims=True, axis=1)
+                """
+                vecs_fake.append(val)
 
-                    # REAL
-                    one_hot = tf.one_hot(tf.reshape(inputs[ptr], [-1]), col_info['n'])
+                # REAL
+                one_hot = tf.one_hot(tf.reshape(inputs[ptr], [-1]), col_info['n'])
 
-                    if self.training:
-                        noise = tf.random_uniform(tf.shape(one_hot), minval=0, maxval=self.noise)
-                        one_hot = (one_hot + noise) / tf.reduce_sum(
-                            one_hot + noise, keepdims=True, axis=1)
+                if self.training:
+                    noise = tf.random_uniform(tf.shape(one_hot), minval=0, maxval=self.noise)
+                    one_hot = (one_hot + noise) / tf.reduce_sum(
+                        one_hot + noise, keepdims=True, axis=1)
 
-                    vecs_real.append(one_hot)
+                vecs_real.append(one_hot)
 
-                    ptr += 1
+                ptr += 1
 
-                elif col_info['type'] == 'continuous':
-                    vecs_output.append(vecs_gen[ptr])
-                    vecs_fake.append(vecs_gen[ptr])
-                    vecs_real.append(inputs[ptr])
-                    ptr += 1
+            elif col_info['type'] == 'continuous':
+                vecs_output.append(vecs_gen[ptr])
+                vecs_fake.append(vecs_gen[ptr])
+                vecs_real.append(inputs[ptr])
+                ptr += 1
 
-                    vecs_output.append(vecs_gen[ptr])
-                    vecs_fake.append(vecs_gen[ptr])
-                    vecs_real.append(inputs[ptr])
-                    ptr += 1
+                vecs_output.append(vecs_gen[ptr])
+                vecs_fake.append(vecs_gen[ptr])
+                vecs_real.append(inputs[ptr])
+                ptr += 1
 
-            # This weird thing is then used for sampling the generator once it has been trained.
-            tf.identity(tf.concat(vecs_output, axis=1), name='gen')
+        # This weird thing is then used for sampling the generator once it has been trained.
+        tf.identity(tf.concat(vecs_output, axis=1), name='output')
 
         self.build_losses(vecs_real, vecs_fake)
         self.collect_variables()
+
+    def build_losses(self, vecs_real, vecs_fake):
+        r"""
+        D and G play two-player minimax game with value function :math:`V(G,D)`.
+
+        .. math::
+
+            min_G max_D V(D, G) = IE_{x \sim p_{data}} [log D(x)] + IE_{z \sim p_{fake}}
+                [log (1 - D(G(z)))]
+
+        Args:
+            logits_real (tensorflow.Tensor): discrim logits from real samples.
+            logits_fake (tensorflow.Tensor): discrim logits from fake samples from generator.
+            extra_g(float):
+            l2_norm(float): scale to apply L2 regularization.
+
+        Returns:
+            None
+
+        """
+
+        kl = self.kl_loss(vecs_real, vecs_fake)
+
+        with tf.variable_scope('discrim'):
+            logits_real = self.discriminator(vecs_real)
+            logits_fake = self.discriminator(vecs_fake)
+
+        with tf.name_scope("GAN_loss"):
+            score_real = tf.sigmoid(logits_real)
+            score_fake = tf.sigmoid(logits_fake)
+            tf.summary.histogram('score-real', score_real)
+            tf.summary.histogram('score-fake', score_fake)
+
+            with tf.name_scope("discrim"):
+                d_loss_pos = tf.reduce_mean(
+                    tf.nn.sigmoid_cross_entropy_with_logits(
+                        logits=logits_real,
+                        labels=tf.ones_like(logits_real)) * 0.7 + tf.random_uniform(
+                            tf.shape(logits_real),
+                            maxval=0.3
+                    ),
+                    name='loss_real'
+                )
+
+                d_loss_neg = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
+                    logits=logits_fake, labels=tf.zeros_like(logits_fake)), name='loss_fake')
+
+                d_pos_acc = tf.reduce_mean(
+                    tf.cast(score_real > 0.5, tf.float32), name='accuracy_real')
+
+                d_neg_acc = tf.reduce_mean(
+                    tf.cast(score_fake < 0.5, tf.float32), name='accuracy_fake')
+
+                d_loss = 0.5 * d_loss_pos + 0.5 * d_loss_neg + \
+                    tf.contrib.layers.apply_regularization(
+                        tf.contrib.layers.l2_regularizer(self.l2norm),
+                        tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "discrim"))
+
+                self.d_loss = tf.identity(d_loss, name='loss')
+
+            with tf.name_scope("gen"):
+                g_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
+                    logits=logits_fake, labels=tf.ones_like(logits_fake))) + \
+                    tf.contrib.layers.apply_regularization(
+                        tf.contrib.layers.l2_regularizer(self.l2norm),
+                        tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'gen'))
+
+                g_loss = tf.identity(g_loss, name='loss')
+                extra_g = tf.identity(kl, name='klloss')
+                self.g_loss = tf.identity(g_loss + extra_g, name='final-g-loss')
+
+            add_moving_summary(
+                g_loss, extra_g, self.g_loss, self.d_loss, d_pos_acc, d_neg_acc, decay=0.)
+
 
     def _get_optimizer(self):
         if self.optimizer == 'AdamOptimizer':

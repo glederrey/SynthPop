@@ -15,24 +15,24 @@ class GANTrainer(TowerTrainer):
     Just calling :meth:`model.build_graph` directly is OK.
 
     Args:
-        input_queue(tensorpack.input_source.QueueInput): Data input.
+        input(tensorpack.input_source.QueueInput): Data input.
         model(tgan.GAN.GANModelDesc): Model to train.
 
     """
 
-    def __init__(self, model, input_queue):
+    def __init__(self, input, model):
         """Initialize object."""
         super().__init__()
         inputs_desc = model.get_inputs_desc()
 
         # Setup input
-        cbs = input_queue.setup(inputs_desc)
+        cbs = input.setup(inputs_desc)
         self.register_callback(cbs)
 
         # Build the graph
         self.tower_func = TowerFuncWrapper(model.build_graph, inputs_desc)
         with TowerContext('', is_training=True):
-            self.tower_func(*input_queue.get_input_tensors())
+            self.tower_func(*input.get_input_tensors())
 
         opt = model.get_optimizer()
 
@@ -98,58 +98,3 @@ class SeparateGANTrainer(TowerTrainer):
             self.hooked_sess.run(self.d_min)
         if self.global_step % (self._g_period) == 0:
             self.hooked_sess.run(self.g_min)
-
-
-class MultiGPUGANTrainer(TowerTrainer):
-    """
-    A replacement of GANTrainer (optimize d and g one by one) with multi-gpu support.
-
-    Args:
-        nr_gpu(int):
-        input(tensorpack.input_source.QueueInput): Data input.
-        model(tgan.GAN.GANModelDesc): Model to train.
-
-    """
-
-    def __init__(self, nr_gpu, input, model):
-        """Initialize object."""
-        super(MultiGPUGANTrainer, self).__init__()
-        if nr_gpu <= 1:
-            raise ValueError('nr_gpu must be strictly greater than 1.')
-
-        raw_devices = ['/gpu:{}'.format(k) for k in range(nr_gpu)]
-
-        # Setup input
-        input = StagingInput(input)
-        cbs = input.setup(model.get_inputs_desc())
-        self.register_callback(cbs)
-
-        # Build the graph with multi-gpu replication
-        def get_cost(*inputs):
-            model.build_graph(*inputs)
-            return [model.d_loss, model.g_loss]
-
-        self.tower_func = TowerFuncWrapper(get_cost, model.get_inputs_desc())
-        devices = [LeastLoadedDeviceSetter(d, raw_devices) for d in raw_devices]
-
-        cost_list = DataParallelBuilder.build_on_towers(
-            list(range(nr_gpu)),
-            lambda: self.tower_func(*input.get_input_tensors()),
-            devices)
-
-        # Simply average the cost here. It might be faster to average the gradients
-        with tf.name_scope('optimize'):
-            d_loss = tf.add_n([x[0] for x in cost_list]) * (1.0 / nr_gpu)
-            g_loss = tf.add_n([x[1] for x in cost_list]) * (1.0 / nr_gpu)
-
-            opt = model.get_optimizer()
-            # run one d_min after one g_min
-            g_min = opt.minimize(g_loss, var_list=model.g_vars,
-                                 colocate_gradients_with_ops=True, name='g_op')
-
-            with tf.control_dependencies([g_min]):
-                d_min = opt.minimize(d_loss, var_list=model.d_vars,
-                                     colocate_gradients_with_ops=True, name='d_op')
-
-        # Define the training iteration
-        self.train_op = d_min
