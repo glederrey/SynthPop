@@ -339,71 +339,40 @@ class DATGANModel(ModelDescBase):
         tmp_attention = None
         tmp_input = None
 
-        # create the cell(s)
-        if col_info['type'] == 'continuous':
-            output, state = cell(tf.concat([inputs, attention], axis=1), state)
-            prev_states.append(state[1])
-            tmp_states.append(state)
+        # Create the cell
+        output, state = cell(tf.concat([inputs, attention], axis=1), state)
+        prev_states.append(state[1])
+        tmp_states.append(state)
+        with tf.variable_scope("%02d" % ptr):
+            h = FullyConnected('FC', output, self.num_gen_feature, nl=tf.tanh)
+            #h = tf.concat([h, z], axis=1)  # Skip as in MedGAN
 
-            with tf.variable_scope("%02d" % ptr):
-                h = FullyConnected('FC', output, self.num_gen_feature, nl=tf.tanh)
-
+            # For cont. var, we need to get the probability and the values
+            if col_info['type'] == 'continuous':
                 w_val = FullyConnected('FC2_val', h, col_info['n'], nl=tf.tanh)
                 w_prob = FullyConnected('FC2_prob', h, col_info['n'], nl=tf.nn.softmax)
 
+                # 2 outputs here
                 tmp_outputs.append(w_val)
                 tmp_outputs.append(w_prob)
 
-                vec_ws = [w_val, w_prob]
-
-                """
-                # Add the choice in the vector w.
-                w_dec = tf.reshape(tf.random.categorical(tf.math.log(w_prob), 1), [-1])
-                one_hot = tf.one_hot(w_dec, col_info['n'])
-                vec_ws.append(tf.cast(one_hot, dtype='float32'))
-                """
-
-                tmp_input = FullyConnected('FC3', tf.concat(vec_ws, axis=1),
-                                           self.num_gen_feature, nl=tf.identity)
-                attw = tf.get_variable("attw", shape=(len(prev_states), 1, 1))
-                attw = tf.nn.softmax(attw, axis=0)
-                tmp_attention = tf.reduce_sum(tf.stack(prev_states, axis=0) * attw, axis=0)
-
-            ptr += 1
-
-        elif col_info['type'] == 'category':
-            output, state = cell(tf.concat([inputs, attention], axis=1), state)
-            prev_states.append(state[1])
-            tmp_states.append(state)
-
-            with tf.variable_scope("%02d" % ptr):
-                h = FullyConnected('FC', output, self.num_gen_feature, nl=tf.tanh)
+                w = tf.concat([w_val, w_prob], axis=1)
+            # For cat. var, we only need the probability
+            elif col_info['type'] == 'category':
                 w = FullyConnected('FC2', h, col_info['n'], nl=tf.nn.softmax)
                 tmp_outputs.append(w)
 
-                tmp_input = FullyConnected('FC3', w, self.num_gen_feature, nl=tf.identity)
+            else:
+                raise ValueError(
+                    "self.metadata['details'][{}]['type'] must be either `category` or "
+                    "`continuous`. Instead it was {}.".format(col, col_info['type'])
+                )
 
-                # res_tensor = tf.reshape(tf.random.categorical(tf.math.log(w), 1), [-1])
-                # res_tensor = tf.argmax(w, axis=1)
-
-                #one_hot = tf.one_hot(res_tensor, col_info['n'])
-
-                #tmp_input = FullyConnected('FC3', one_hot, self.num_gen_feature, nl=tf.identity)
-
-                #vec_ws = [w, one_hot]
-                #tmp_input = FullyConnected('FC3', tf.concat(vec_ws, axis=1), self.num_gen_feature, nl=tf.identity)
-
-                attw = tf.get_variable("attw", shape=(len(prev_states), 1, 1))
-                attw = tf.nn.softmax(attw, axis=0)
-                tmp_attention = tf.reduce_sum(tf.stack(prev_states, axis=0) * attw, axis=0)
-
-            ptr += 1
-
-        else:
-            raise ValueError(
-                "self.metadata['details'][{}]['type'] must be either `category` or "
-                "`continuous`. Instead it was {}.".format(col, col_info['type'])
-            )
+            tmp_input = FullyConnected('FC3', w, self.num_gen_feature, nl=tf.identity)
+            attw = tf.get_variable("attw", shape=(len(prev_states), 1, 1))
+            attw = tf.nn.softmax(attw, axis=0)
+            tmp_attention = tf.reduce_sum(tf.stack(prev_states, axis=0) * attw, axis=0)
+        ptr += 1
 
         return tmp_attention, tmp_states, tmp_input, tmp_outputs, ptr
 

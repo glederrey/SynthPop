@@ -77,26 +77,24 @@ class DATWGANModel(DATGANModel):
 
         """
         logits = tf.identity(vecs)
-        for i in range(self.num_dis_layers):
-            with tf.variable_scope('dis_fc{}'.format(i)):
-                """
-                if i == 0:
-                    logits = FullyConnected(
-                        'fc', logits, self.num_dis_hidden, nl=tf.identity,
-                        kernel_initializer=tf.truncated_normal_initializer(stddev=0.02)
-                    )
+        with tf.variable_scope('discrim'):
+            for i in range(self.num_dis_layers):
+                with tf.variable_scope('dis_fc{}'.format(i)):
+                    if i == 0:
+                        logits = FullyConnected(
+                            'fc', logits, self.num_dis_hidden, nl=tf.identity,
+                            kernel_initializer=tf.truncated_normal_initializer(stddev=0.1)
+                        )
 
-                else:
-                    logits = FullyConnected('fc', logits, self.num_dis_hidden, nl=tf.identity)
-                """
-                logits = FullyConnected('fc', logits, self.num_dis_hidden, nl=tf.identity)
+                    else:
+                        logits = FullyConnected('fc', logits, self.num_dis_hidden, nl=tf.identity)
 
-                logits = tf.concat([logits, self.batch_diversity(logits)], axis=1)
-                logits = LayerNorm('ln', logits)
-                logits = Dropout(logits)
-                logits = tf.nn.leaky_relu(logits)
+                    logits = tf.concat([logits, self.batch_diversity(logits)], axis=1)
+                    logits = LayerNorm('ln', logits)
+                    logits = Dropout(logits)
+                    logits = tf.nn.leaky_relu(logits)
 
-        return FullyConnected('dis_fc_top', logits, 1, nl=tf.identity)
+            return FullyConnected('dis_fc_top', logits, 1, nl=tf.identity)
 
     def build_losses(self, vecs_real, vecs_fake):
         r"""
@@ -133,9 +131,10 @@ class DATWGANModel(DATGANModel):
 
             # the gradient penalty loss
             gradients = tf.gradients(d_logit_interp, vecs_interp)[0]
-            gradients = tf.sqrt(tf.reduce_sum(tf.square(gradients), [1]))
-            gradients_rms = tf.sqrt(tf.reduce_mean(tf.square(gradients)), name='gradient_rms')
-            gradient_penalty = tf.reduce_mean(tf.square(gradients - 1), name='gradient_penalty')
+            red_idx = list(range(1, vecs_interp.shape.ndims))
+            slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), reduction_indices=red_idx))
+            gradients_rms = tf.sqrt(tf.reduce_mean(tf.square(slopes)), name='gradient_rms')
+            gradient_penalty = tf.reduce_mean(tf.square(slopes - 1), name='gradient_penalty')
 
             kl = tf.identity(kl, name='kl_div')
             add_moving_summary(self.d_loss, self.g_loss, gradient_penalty, gradients_rms, kl)
@@ -154,3 +153,13 @@ class DATWGANModel(DATGANModel):
                     tf.contrib.layers.l2_regularizer(self.l2norm),
                     tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "gen"))
             """
+
+    def _get_optimizer(self):
+        if self.optimizer == 'AdamOptimizer':
+            return tf.train.AdamOptimizer(self.learning_rate, beta1=0, beta2=0.9)
+
+        elif self.optimizer == 'AdadeltaOptimizer':
+            return tf.train.AdadeltaOptimizer(self.learning_rate, 0.95)
+
+        else:
+            return tf.train.GradientDescentOptimizer(self.learning_rate)
