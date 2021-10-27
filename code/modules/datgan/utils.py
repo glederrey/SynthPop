@@ -1,4 +1,8 @@
 import numpy as np
+import tensorflow as tf
+
+from tensorpack import Callback
+from tensorpack.utils import logger
 
 # See paper "Persistent Homology in Data Science" from S. Huber
 # link: https://link.springer.com/chapter/10.1007%2F978-3-658-32182-6_13
@@ -59,3 +63,19 @@ def get_persistent_homology(seq):
     pers = np.array([p.get_persistence(seq) for p in peaks])
 
     return sorted(peaks, key=lambda p: p.get_persistence(seq), reverse=True)
+
+
+class ClipCallback(Callback):
+    def _setup_graph(self):
+        vars = tf.trainable_variables()
+        ops = []
+        for v in vars:
+            n = v.op.name
+            if not n.startswith('discrim/'):
+                continue
+            logger.info("Clip {}".format(n))
+            ops.append(tf.assign(v, tf.clip_by_value(v, -0.01, 0.01)))
+        self._op = tf.group(*ops, name='clip')
+
+    def _trigger_step(self):
+        self._op.run()
