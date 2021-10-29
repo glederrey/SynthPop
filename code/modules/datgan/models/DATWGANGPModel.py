@@ -142,18 +142,6 @@ class DATWGANGPModel(DATSGANModel):
             self.d_loss = tf.add(self.d_loss, self.lambda_ * gradient_penalty)
             self.g_loss = tf.add(self.g_loss, kl)
 
-            """
-            self.d_loss = tf.add(self.d_loss, self.lambda_ * gradient_penalty) + \
-                tf.contrib.layers.apply_regularization(
-                    tf.contrib.layers.l2_regularizer(self.l2norm),
-                    tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "discrim"))
-
-            self.g_loss = tf.add(self.g_loss, kl) + \
-                tf.contrib.layers.apply_regularization(
-                    tf.contrib.layers.l2_regularizer(self.l2norm),
-                    tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "gen"))
-            """
-
     def _get_optimizer(self):
         if self.optimizer == 'AdamOptimizer':
             return tf.train.AdamOptimizer(self.learning_rate, beta1=0, beta2=0.9)

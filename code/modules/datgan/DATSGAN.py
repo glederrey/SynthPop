@@ -276,8 +276,8 @@ class DATSGAN:
             # Get info
             col_info = self.metadata['details'][col]
             if col_info['type'] == 'category':
-                features[col] = results[:, ptr:ptr + 1]
-                ptr += 1
+                features[col] = results[:, ptr:ptr + col_info['n']]
+                ptr += col_info['n']
 
             elif col_info['type'] == 'continuous':
 

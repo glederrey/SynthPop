@@ -39,29 +39,9 @@ class DATWGANModel(DATSGANModel):
                          optimizer, training)
         """Initialize the object, set arguments as attributes."""
 
-    """
-    def kl_loss(self, vecs_real, vecs_fake):
-        # KL loss
-        KL = 0.0
-        ptr = 0
-        if self.training:
-            # Go through all variables
-            for col_id, col in enumerate(self.metadata['details'].keys()):
-
-                dist = tf.reduce_sum(vecs_fake[ptr], axis=0)
-                dist = dist / tf.reduce_sum(dist)
-
-                real = tf.reduce_sum(vecs_real[ptr], axis=0)
-                real = real / tf.reduce_sum(real)
-                KL += self.compute_kl(real, dist)
-                ptr += 1
-
-        return KL
-    """
-
     def build_losses(self, vecs_real, vecs_fake):
         """
-        WGAN-GP loss
+        WGAN loss
 
         Args:
             vecs_real (tensorflow.Tensor): discrim logits from real samples.

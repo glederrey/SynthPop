@@ -272,7 +272,6 @@ class MultiModalNumberTransformer:
 
             if len(pred_) == n_modes:
                 logger.info("  Predictions were done on {:d} components => FINISHED!".format(n_modes))
-                valid_component_indicator = np.array([True] * n_modes)
                 break
             else:
                 n_modes = len(pred_)
@@ -309,11 +308,7 @@ class MultiModalNumberTransformer:
         normalized_values = data[:, :n_modes]
         probs = data[:, n_modes:]
 
-        selected_component = np.zeros(len(data), dtype='int')
-        for i in range(len(data)):
-            component_prob_t = probs[i] + 1e-6
-            component_prob_t = component_prob_t / component_prob_t.sum()
-            selected_component[i] = np.random.choice(np.arange(n_modes), p=component_prob_t)
+        selected_component = select_values(probs, simulation=True)
 
         means = gmm.means_.reshape([-1])
         stds = np.sqrt(gmm.covariances_).reshape([-1])
@@ -439,7 +434,6 @@ class Preprocessor:
 
         Returns:
             pandas.DataFrame: Model features
-
         """
         table = []
 
@@ -452,11 +446,27 @@ class Preprocessor:
 
             if column_metadata['type'] == 'category':
                 self.categorical_transformer.classes_ = column_metadata['mapping']
-                column = self.categorical_transformer.inverse_transform(
-                    column_data.ravel().astype(np.int32))
+
+                selected_component = select_values(column_data, simulation=True)
+
+                column = self.categorical_transformer.inverse_transform(selected_component)
 
             table.append(column)
 
         result = pd.DataFrame(dict(enumerate(table)))
         result.columns = self.columns
         return result
+
+
+def select_values(probs, simulation=True):
+    if simulation:
+        probs = probs + 1e-6
+        probs = np.divide(probs, np.sum(probs, axis=1).reshape((-1, 1)))
+        #sel_comp = [np.random.choice(np.arange(len(p)), p=p) for p in probs]
+        c = probs.cumsum(axis=1)
+        u = np.random.rand(len(c), 1)
+        sel_comp = (u < c).argmax(axis=1)
+
+        return sel_comp
+    else:
+        return np.argmax(probs, axis=1)

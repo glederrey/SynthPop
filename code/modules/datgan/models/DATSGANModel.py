@@ -550,28 +550,27 @@ class DATSGANModel(ModelDescBase):
             if col_info['type'] == 'category':
 
                 # OUTPUT
-                #res_tensor = tf.reshape(tf.random.categorical(tf.math.log(vecs_gen[ptr]), 1), [-1])
-                res_tensor = tf.argmax(vecs_gen[ptr], axis=1)
-
-                res_tensor = tf.cast(tf.reshape(res_tensor, [-1, 1]), 'float32')
-                vecs_output.append(res_tensor)
+                vecs_output.append(vecs_gen[ptr])
 
                 # FAKE
                 val = vecs_gen[ptr]
+
                 """
                 if self.training:
                     noise = tf.random_uniform(tf.shape(val), minval=0, maxval=self.noise)
                     val = (val + noise) / tf.reduce_sum(val + noise, keepdims=True, axis=1)
                 """
+
                 vecs_fake.append(val)
 
                 # REAL
                 one_hot = tf.one_hot(tf.reshape(inputs[ptr], [-1]), col_info['n'])
 
+                """
                 if self.training:
                     noise = tf.random_uniform(tf.shape(one_hot), minval=0, maxval=self.noise)
-                    one_hot = (one_hot + noise) / tf.reduce_sum(
-                        one_hot + noise, keepdims=True, axis=1)
+                    one_hot = (one_hot + noise) / tf.reduce_sum(one_hot + noise, keepdims=True, axis=1)
+                """
 
                 vecs_real.append(one_hot)
 
