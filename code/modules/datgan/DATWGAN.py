@@ -18,10 +18,8 @@ from modules.datgan.trainer import SeparateGANTrainer
 from modules.datgan.models.DATWGANModel import DATWGANModel
 from modules.datgan.DATSGAN import DATSGAN
 
-from tensorpack import BatchData, ModelSaver, QueueInput, SaverRestore
-from tensorpack.utils import logger
+from tensorpack import ModelSaver
 
-from modules.datgan.data import Preprocessor, DATGANDataFlow
 from modules.datgan.utils import ClipCallback
 
 
@@ -90,83 +88,7 @@ class DATWGAN(DATSGAN):
             training=training
         )
 
-    def fit(self, data, dag):
-        """Fit the model to the given data.
-
-        Args:
-            data(pandas.DataFrame): dataset to fit the model.
-            dag(networkx.classes.digraph.DiGraph): DAG for the relations between variables
-
-        Returns:
-            None
-
-        """
-        self.preprocessor = None
-        self.restore_path = os.path.join(self.model_dir, 'checkpoint')
-
-        if self.steps_per_epoch is None:
-            self.steps_per_epoch = max(len(data) // self.batch_size, 1)
-
-        # Verify that the DAG has the same number of nodes as the number of variables in the data
-        # and that it's indeed a DAG.
-        self.dag = dag
-        self.verify_dag(data)
-        self.var_order = self.get_order_variables()
-
-        if os.path.exists(self.data_dir):
-            logger.info("Found preprocessed data")
-
-            # Load preprocessed data
-            with open(os.path.join(self.data_dir, 'preprocessed_data.pkl'), 'rb') as f:
-                transformed_data = pickle.load(f)
-            with open(os.path.join(self.data_dir, 'preprocessor.pkl'), 'rb') as f:
-                self.preprocessor = pickle.load(f)
-
-            logger.info("Preprocessed data have been loaded!")
-        else:
-            # Preprocessing steps
-            logger.info("Preprocessing the data!")
-
-            self.preprocessor = Preprocessor(continuous_columns=self.continuous_columns, columns_order=self.var_order)
-            transformed_data = self.preprocessor.fit_transform(data)
-
-            # Save the preprocessor and the data
-            if not os.path.exists(self.data_dir):
-                os.makedirs(self.data_dir, exist_ok=True)
-            with open(os.path.join(self.data_dir, 'preprocessed_data.pkl'), 'wb') as f:
-                pickle.dump(transformed_data, f)
-            with open(os.path.join(self.data_dir, 'preprocessor.pkl'), 'wb') as f:
-                pickle.dump(self.preprocessor, f)
-
-            logger.info("Preprocessed data have been saved!")
-
-            # Verification for continuous mixture
-            self.plot_continuous_mixtures(data, self.data_dir)
-
-        self.metadata = self.preprocessor.metadata
-        dataflow = DATGANDataFlow(transformed_data, self.metadata)
-        batch_data = BatchData(dataflow, self.batch_size)
-        input_queue = QueueInput(batch_data)
-
-        self.model = self.get_model(training=True)
-
-        trainer = self.trainer(
-            input=input_queue,
-            model=self.model
-        )
-
-        # Checking if previous training already exists
-        session_init = None
-        starting_epoch = 1
-        if os.path.isfile(self.restore_path) and self.restore_session:
-            logger.info("Found an already existing model. Loading it!")
-
-            session_init = SaverRestore(self.restore_path)
-            with open(os.path.join(self.log_dir, 'stats.json')) as f:
-                starting_epoch = json.load(f)[-1]['epoch_num'] + 1
-
-        action = 'k' if self.restore_session else None
-        logger.set_logger_dir(self.log_dir, action=action)
+    def get_callbacks(self):
 
         callbacks = []
         if self.save_checkpoints:
@@ -174,12 +96,4 @@ class DATWGAN(DATSGAN):
 
         callbacks.append(ClipCallback())
 
-        trainer.train_with_defaults(
-            callbacks=callbacks,
-            steps_per_epoch=self.steps_per_epoch,
-            max_epoch=self.max_epoch,
-            session_init=session_init,
-            starting_epoch=starting_epoch
-        )
-
-        self.prepare_sampling()
+        return callbacks

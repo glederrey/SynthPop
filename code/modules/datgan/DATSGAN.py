@@ -206,9 +206,7 @@ class DATSGAN:
         action = 'k' if self.restore_session else None
         logger.set_logger_dir(self.log_dir, action=action)
 
-        callbacks = []
-        if self.save_checkpoints:
-            callbacks.append(ModelSaver(checkpoint_dir=self.model_dir))
+        callbacks = self.get_callbacks()
 
         trainer.train_with_defaults(
             callbacks=callbacks,
@@ -219,6 +217,14 @@ class DATSGAN:
         )
 
         self.prepare_sampling()
+
+    def get_callbacks(self):
+
+        callbacks = []
+        if self.save_checkpoints:
+            callbacks.append(ModelSaver(checkpoint_dir=self.model_dir))
+
+        return callbacks
 
     def prepare_sampling(self):
         """Prepare model to generate samples."""
@@ -234,11 +240,20 @@ class DATSGAN:
             input_names=['z'],
             output_names=['output', 'z'],
         )
+        # MULTI NOISE
+        n_vars = len(self.metadata['details'].keys())
+        self.simple_dataset_predictor = SimpleDatasetPredictor(
+            predict_config,
+            RandomZData((n_vars, self.batch_size, self.z_dim))
+        )
 
+        # ONE NOISE
+        """
         self.simple_dataset_predictor = SimpleDatasetPredictor(
             predict_config,
             RandomZData((self.batch_size, self.z_dim))
         )
+        """
 
     def sample(self, num_samples):
         """Generate samples from model.

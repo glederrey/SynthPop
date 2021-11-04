@@ -12,9 +12,8 @@ from sklearn.mixture import BayesianGaussianMixture
 from sklearn.preprocessing import LabelEncoder
 from tensorpack import DataFlow, RNGDataFlow
 from tensorpack.utils import logger
-
-from modules.datgan.utils import get_persistent_homology
-
+from sklearn.exceptions import ConvergenceWarning
+import warnings
 
 def check_metadata(metadata):
     """Check that the given metadata has correct types for all its members.
@@ -219,7 +218,9 @@ class MultiModalNumberTransformer:
         self.n_bins = 50
         self.thresh = 1e-3
 
-    @check_inputs
+        # Remove Convergence warning
+        warnings.filterwarnings(action='ignore', category=ConvergenceWarning)
+
     def transform(self, data):
         """Cluster values using a `skelarn.mixture.BayesianGaussianMixture`_ model.
 
@@ -234,48 +235,45 @@ class MultiModalNumberTransformer:
             sklearn.mixture.BayesianGaussianMixture.html
 
         """
+        n_modes = 10
+        logger.info("  Fitting model with {:d} components".format(n_modes))
 
-        # Transform data using the histogram function
-        hist = np.histogram(data, bins=self.n_bins, density=True)
-
-        # Use the persistent homology to find the number of peaks in the data
-        peaks = get_persistent_homology(hist[0])
-        pers = np.array([p.get_persistence(hist[0]) for p in peaks])
-
-        n_peaks = sum(pers > self.thresh) - 1
-
-        logger.info("  Found {} peaks!".format(n_peaks))
-
-        # Decide on the number of modes for the BGM
-        if n_peaks < 2:
-            n_modes = self.max_clusters
-        else:
-            n_modes = min(n_peaks, self.max_clusters)
-
-        logger.info("  Encoding with {} components.".format(n_modes))
         while True:
+
             # Fit the BGM
             model = BayesianGaussianMixture(
                 n_components=n_modes,
                 max_iter=200,
                 n_init=10,
                 init_params='kmeans',
-                reg_covar=0,
-                weight_concentration_prior_type='dirichlet_process',
-                mean_precision_prior=.8,
-                tol=1e-5,
-                weight_concentration_prior=1e-5)
-            model.fit(data)
+                weight_concentration_prior_type='dirichlet_process')
+
+            # Test with less data
+            idx = np.random.choice(len(data), min(10000, len(data)))
+            samples = data[idx]
+
+            model.fit(samples)
 
             # Check that BGM is using all the classes!
-            pred_ = np.unique(model.predict(data))
+            pred_ = np.unique(model.predict(samples))
 
-            if len(pred_) == n_modes:
+            # Check that the weights are large enough
+            w = model.weights_ > 1e-2
+
+            # Choose what to do
+            if len(pred_) != n_modes:
+                n_modes = len(pred_)
+                logger.info(
+                    "  Predictions were done on {:d} components => Fit with {:d} components!".format(n_modes, n_modes))
+            elif np.sum(w) != n_modes:
+                n_modes = np.sum(w)
+                logger.info("  Some weights are too small =>  => Fit with {:d} components!".format(n_modes))
+            else:
                 logger.info("  Predictions were done on {:d} components => FINISHED!".format(n_modes))
                 break
-            else:
-                n_modes = len(pred_)
-                logger.info("  Predictions were done on only {:d} components => Simplification!".format(n_modes))
+
+        logger.info("  Train VGM with full data")
+        model.fit(data)
 
         means = model.means_.reshape((1, n_modes))
         stds = np.sqrt(model.covariances_).reshape((1, n_modes))
@@ -289,7 +287,6 @@ class MultiModalNumberTransformer:
 
         return normalized_values, probs, model, n_modes
 
-    #@staticmethod
     def inverse_transform(self, data, info):
         """Reverse the clustering of values.
 
@@ -447,7 +444,7 @@ class Preprocessor:
             if column_metadata['type'] == 'category':
                 self.categorical_transformer.classes_ = column_metadata['mapping']
 
-                selected_component = select_values(column_data, simulation=True)
+                selected_component = select_values(column_data, simulation=False)
 
                 column = self.categorical_transformer.inverse_transform(selected_component)
 

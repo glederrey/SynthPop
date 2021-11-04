@@ -188,11 +188,8 @@ class DATSGANModel(ModelDescBase):
 
         # Create the NN structure
         with tf.variable_scope('LSTM'):
-            # LSTM cell
-            cell = tf.nn.rnn_cell.LSTMCell(self.num_gen_rnn)
 
             # Some variables
-            ptr = 0
             outputs = []
             states = {}
 
@@ -200,26 +197,37 @@ class DATSGANModel(ModelDescBase):
             attentions = []
             name_to_id = {}
 
-            input = None
-            state = None
-            attention = None
+            #zero_input = tf.get_variable(name='zero_input', shape=(1, self.num_gen_feature))
 
             # Go through all variables
             for col_id, col in enumerate(self.metadata['details'].keys()):
-                logger.info("\033[91mCreating cell for {} (in-edges: {})".format(col, len(in_edges[col])))
+
+                cell = tf.nn.rnn_cell.LSTMCell(self.num_gen_rnn, name=col)
+
+                ancestors = nx.ancestors(self.dag, col)
+
+                info_ = "\033[91mCreating cell for {} (in-edges: {}; ancestors: {})".format(col, len(in_edges[col]),
+                                                                                            len(ancestors))
+                logger.info(info_)
 
                 # Get info
                 col_info = self.metadata['details'][col]
                 name_to_id[col] = col_id
+
+                input = None
+                attention = None
+                state = None
+                ancestor_states = None
 
                 if len(in_edges[col]) <= 1:
                     # Standard procedure as for the TGAN
 
                     # Get the inputs, attention and state vector in function of the number of in edges
                     if len(in_edges[col]) == 0:
-                        input = tf.get_variable(name='go_{}'.format(col), shape=(1, self.num_gen_feature))
+                        input = tf.get_variable(name='zero.input-{}'.format(col), shape=(1, self.num_gen_feature))
                         input = tf.tile(input, [self.batch_size, 1])
-                        attention = tf.zeros(shape=(self.batch_size, self.num_gen_rnn), dtype='float32')
+                        #input = tf.tile(zero_input, [self.batch_size, 1])
+                        attention = tf.zeros(shape=(self.batch_size, self.num_gen_rnn), dtype='float32', name='zero.attention-{}'.format(col))
                         # LSTM state
                         state = cell.zero_state(self.batch_size, dtype='float32')
                     else:
@@ -227,44 +235,20 @@ class DATSGANModel(ModelDescBase):
                         input = inputs[id_]
                         attention = attentions[id_]
                         # LSTM state
-                        state = states[in_edges[col][0]][-1]
-
-                    # Concat the input with the random variable z
-                    input = tf.concat([input, z], axis=1)
+                        state = states[in_edges[col][0]]
 
                     # Compute the previous states
-                    ancestors = nx.ancestors(self.dag, col)
-                    prev_states = []
+                    ancestor_states = []
                     for n in self.dag.nodes:
                         if n in ancestors:
-                            for s in states[n]:
-                                prev_states.append(s[1])
-
-                    [tmp_attention, tmp_states, tmp_inputs,
-                     tmp_outputs, ptr] = self.create_cell(cell, z, col, col_info, input,
-                                                          attention, prev_states, state, ptr)
-
-                    # Add the input to the list of inputs
-                    inputs.append(tmp_inputs)
-
-                    # Add the attention to the list of attentions
-                    attentions.append(tmp_attention)
-
-                    # Add the state to the list of states
-                    states[col] = tmp_states
-
-                    # Add the list of outputs to the outputs
-                    for o in tmp_outputs:
-                        outputs.append(o)
-
+                            ancestor_states.append(states[n][-1])
                 else:
                     # Compute the previous states
                     ancestors = nx.ancestors(self.dag, col)
-                    prev_states = []
+                    ancestor_states = []
                     for n in self.dag.nodes:
                         if n in ancestors:
-                            for s in states[n]:
-                                prev_states.append(s[1])
+                            ancestor_states.append(states[n][-1])
 
                     # Go through all in edges to get input, attention and state
                     miLSTM_states = []
@@ -275,10 +259,10 @@ class DATSGANModel(ModelDescBase):
                         miLSTM_inputs.append(inputs[id_])
                         miLSTM_attentions.append(attentions[id_])
                         # LSTM state
-                        miLSTM_states.append(states[name][-1])
+                        miLSTM_states.append(states[name])
 
                     # Concatenate the inputs, attention and states
-                    with tf.variable_scope("%02d" % ptr):
+                    with tf.variable_scope("concat-{}".format(col)):
                         # FC for inputs
                         tmp = tf.concat(miLSTM_inputs, axis=1)
                         tmp_fc = FullyConnected('FC_inputs', tmp, self.num_gen_feature, nl=None)
@@ -304,48 +288,44 @@ class DATSGANModel(ModelDescBase):
 
                         state = tf.nn.rnn_cell.LSTMStateTuple(tmp_states[0], tmp_states[1])
 
-                    ptr += 1
+                # Concat the input with the random variable z
+                # MULTI NOISE
+                input = tf.concat([input, z[col_id]], axis=1)
 
-                    # Concat the input with the random variable z
-                    input = tf.concat([input, z], axis=1)
+                # ONE NOISE
+                # input = tf.concat([input, z], axis=1)
 
-                    # Final LSTM cell
-                    [tmp_attention, tmp_states, tmp_inputs,
-                     tmp_outputs, ptr] = self.create_cell(cell, z, col, col_info, input,
-                                                          attention, prev_states, state, ptr)
+                [new_attention, new_state, new_inputs, new_outputs] = self.create_cell(cell, col, col_info, input,
+                                                                                        attention, ancestor_states,
+                                                                                        state)
 
-                    # Add the input to the list of inputs
-                    inputs.append(tmp_inputs)
+                # Add the input to the list of inputs
+                inputs.append(new_inputs)
 
-                    # Add the attention to the list of attentions
-                    attentions.append(tmp_attention)
+                # Add the attention to the list of attentions
+                attentions.append(new_attention)
 
-                    # Add the state to the list of states
-                    states[col] = tmp_states
+                # Add the state to the list of states
+                states[col] = new_state
 
-                    # Add the list of outputs to the outputs
-                    for o in tmp_outputs:
-                        outputs.append(o)
+                # Add the list of outputs to the outputs
+                for o in new_outputs:
+                    outputs.append(o)
 
         return outputs
 
-    def create_cell(self, cell, z, col, col_info, inputs, attention, prev_states, state, ptr):
+    def create_cell(self, cell, col, col_info, inputs, attention, ancestor_states, state):
         """
         Function that create the cells for the generator.
         """
 
-        tmp_states = []
-        tmp_outputs = []
-        tmp_attention = None
-        tmp_input = None
-
-        # Create the cell
+        # Use the LSTM cell
         output, state = cell(tf.concat([inputs, attention], axis=1), state)
-        prev_states.append(state[1])
-        tmp_states.append(state)
-        with tf.variable_scope("%02d" % ptr):
+        ancestor_states.append(state[1])
+        new_states = state
+        new_outputs = []
+        with tf.variable_scope(col):
             h = FullyConnected('FC', output, self.num_gen_feature, nl=tf.tanh)
-            #h = tf.concat([h, z], axis=1)  # Skip as in MedGAN
 
             # For cont. var, we need to get the probability and the values
             if col_info['type'] == 'continuous':
@@ -353,14 +333,14 @@ class DATSGANModel(ModelDescBase):
                 w_prob = FullyConnected('FC2_prob', h, col_info['n'], nl=tf.nn.softmax)
 
                 # 2 outputs here
-                tmp_outputs.append(w_val)
-                tmp_outputs.append(w_prob)
+                new_outputs.append(w_val)
+                new_outputs.append(w_prob)
 
                 w = tf.concat([w_val, w_prob], axis=1)
             # For cat. var, we only need the probability
             elif col_info['type'] == 'category':
                 w = FullyConnected('FC2', h, col_info['n'], nl=tf.nn.softmax)
-                tmp_outputs.append(w)
+                new_outputs.append(w)
 
             else:
                 raise ValueError(
@@ -368,13 +348,12 @@ class DATSGANModel(ModelDescBase):
                     "`continuous`. Instead it was {}.".format(col, col_info['type'])
                 )
 
-            tmp_input = FullyConnected('FC3', w, self.num_gen_feature, nl=tf.identity)
-            attw = tf.get_variable("attw", shape=(len(prev_states), 1, 1))
-            attw = tf.nn.softmax(attw, axis=0)
-            tmp_attention = tf.reduce_sum(tf.stack(prev_states, axis=0) * attw, axis=0)
-        ptr += 1
+            new_input = FullyConnected('FC3', w, self.num_gen_feature, nl=tf.identity)
+            attw = tf.get_variable("attw", shape=(len(ancestor_states), 1, 1))
+            attw = tf.nn.softmax(attw, axis=0, name='softmax-attw')
+            new_attention = tf.reduce_sum(tf.stack(ancestor_states, axis=0) * attw, axis=0, name='new-att')
 
-        return tmp_attention, tmp_states, tmp_input, tmp_outputs, ptr
+        return new_attention, new_states, new_input, new_outputs
 
     @staticmethod
     def batch_diversity(l, n_kernel=10, kernel_dim=10):
@@ -421,7 +400,7 @@ class DATSGANModel(ModelDescBase):
             tensorflow.Tensor
 
         """
-        M = FullyConnected('fc_diversity', l, n_kernel * kernel_dim, nl=tf.identity)
+        M = FullyConnected('FC_DIVERSITY', l, n_kernel * kernel_dim, nl=tf.identity)
         M = tf.reshape(M, [-1, n_kernel, kernel_dim])
         M1 = tf.reshape(M, [-1, 1, n_kernel, kernel_dim])
         M2 = tf.reshape(M, [1, -1, n_kernel, kernel_dim])
@@ -464,22 +443,22 @@ class DATSGANModel(ModelDescBase):
         """
         logits = tf.identity(vecs)
         for i in range(self.num_dis_layers):
-            with tf.variable_scope('dis_fc{}'.format(i)):
+            with tf.variable_scope('DISCR_FC_{}'.format(i)):
                 if i == 0:
                     logits = FullyConnected(
-                        'fc', logits, self.num_dis_hidden, nl=tf.identity,
+                        'FC', logits, self.num_dis_hidden, nl=tf.identity,
                         kernel_initializer=tf.truncated_normal_initializer(stddev=0.1)
                     )
 
                 else:
-                    logits = FullyConnected('fc', logits, self.num_dis_hidden, nl=tf.identity)
+                    logits = FullyConnected('FC', logits, self.num_dis_hidden, nl=tf.identity)
 
                 logits = tf.concat([logits, self.batch_diversity(logits)], axis=1)
-                logits = BatchNorm('bn', logits, center=True, scale=False)
+                logits = BatchNorm('BN', logits, center=True, scale=False)
                 logits = Dropout(logits)
                 logits = tf.nn.leaky_relu(logits)
 
-        return FullyConnected('dis_fc_top', logits, 1, nl=tf.identity)
+        return FullyConnected('DISCR_FC_TOP', logits, 1, nl=tf.identity)
 
     @staticmethod
     def compute_kl(real, pred):
@@ -529,10 +508,15 @@ class DATSGANModel(ModelDescBase):
             None
 
         """
-        z = tf.random_normal(
-            [self.batch_size, self.z_dim], name='z_train')
 
-        z = tf.placeholder_with_default(z, [None, self.z_dim], name='z')
+        # MULTI NOISE
+        n_vars = len(self.metadata['details'].keys())
+        z = tf.random_normal([n_vars, self.batch_size, self.z_dim], name='z_train')
+        z = tf.placeholder_with_default(z, [None, None, self.z_dim], name='z')
+
+        # ONE NOISE
+        #z = tf.random_normal([self.batch_size, self.z_dim], name='z_train')
+        #z = tf.placeholder_with_default(z, [None, self.z_dim], name='z')
 
         # Create the output for the model
         with tf.variable_scope('gen'):
@@ -555,23 +539,17 @@ class DATSGANModel(ModelDescBase):
                 # FAKE
                 val = vecs_gen[ptr]
 
-                """
                 if self.training:
                     noise = tf.random_uniform(tf.shape(val), minval=0, maxval=self.noise)
                     val = (val + noise) / tf.reduce_sum(val + noise, keepdims=True, axis=1)
-                """
-
                 vecs_fake.append(val)
 
                 # REAL
                 one_hot = tf.one_hot(tf.reshape(inputs[ptr], [-1]), col_info['n'])
 
-                """
                 if self.training:
                     noise = tf.random_uniform(tf.shape(one_hot), minval=0, maxval=self.noise)
                     one_hot = (one_hot + noise) / tf.reduce_sum(one_hot + noise, keepdims=True, axis=1)
-                """
-
                 vecs_real.append(one_hot)
 
                 ptr += 1

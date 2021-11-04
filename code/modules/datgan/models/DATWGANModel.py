@@ -49,7 +49,6 @@ class DATWGANModel(DATSGANModel):
 
         Returns:
             None
-
         """
 
         kl = self.kl_loss(vecs_real, vecs_fake)
@@ -63,7 +62,6 @@ class DATWGANModel(DATSGANModel):
             d_logit_fake = self.discriminator(vecs_fake)
 
         with tf.name_scope("GAN_loss"):
-
             self.d_loss = tf.reduce_mean(d_logit_fake - d_logit_real, name='d_loss')
             self.g_loss = tf.negative(tf.reduce_mean(d_logit_fake), name='g_loss')
             kl = tf.identity(kl, name='kl_div')

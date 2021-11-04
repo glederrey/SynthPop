@@ -15,6 +15,7 @@ from modules.datgan.trainer import SeparateGANTrainer
 from modules.datgan.models.DATWGANGPModel import DATWGANGPModel
 from modules.datgan.DATSGAN import DATSGAN
 
+from tensorpack import ModelSaver
 
 
 class DATWGANGP(DATSGAN):
