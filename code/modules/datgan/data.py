@@ -211,12 +211,13 @@ class MultiModalNumberTransformer:
 
     """
 
-    def __init__(self):
+    def __init__(self, simu=True):
         """Initialize instance."""
         self.max_clusters = 10
         self.std_span = 2
         self.n_bins = 50
         self.thresh = 1e-3
+        self.simu = simu
 
         # Remove Convergence warning
         warnings.filterwarnings(action='ignore', category=ConvergenceWarning)
@@ -304,7 +305,7 @@ class MultiModalNumberTransformer:
         normalized_values = data[:, :n_modes]
         probs = data[:, n_modes:]
 
-        selected_component = select_values(probs, simulation=False)
+        selected_component = select_values(probs, argmax=self.simu)
 
         means = gmm.means_.reshape([-1])
         stds = np.sqrt(gmm.covariances_).reshape([-1])
@@ -347,6 +348,13 @@ class Preprocessor:
         self.continous_transformer = MultiModalNumberTransformer()
         self.categorical_transformer = LabelEncoder()
         self.columns = None
+        self.categorical_argmax = None
+
+    def set_sampling_technique(self, argmax_sampling):
+
+
+        self.categorical_argmax = (argmax_sampling in ['OD', 'BO'])
+        self.continous_transformer.simu = (argmax_sampling == 'BO')
 
     def fit_transform(self, data, fitting=True):
         """Transform human-readable data into TGAN numerical features.
@@ -443,7 +451,7 @@ class Preprocessor:
             if column_metadata['type'] == 'category':
                 self.categorical_transformer.classes_ = column_metadata['mapping']
 
-                selected_component = select_values(column_data, simulation=False)
+                selected_component = select_values(column_data, argmax=self.categorical_argmax)
 
                 column = self.categorical_transformer.inverse_transform(selected_component)
 
@@ -454,8 +462,10 @@ class Preprocessor:
         return result
 
 
-def select_values(probs, simulation=True):
-    if simulation:
+def select_values(probs, argmax=True):
+    if argmax:
+        return np.argmax(probs, axis=1)
+    else:
         probs = probs + 1e-6
         probs = np.divide(probs, np.sum(probs, axis=1).reshape((-1, 1)))
         c = probs.cumsum(axis=1)
@@ -463,5 +473,3 @@ def select_values(probs, simulation=True):
         sel_comp = (u < c).argmax(axis=1)
 
         return sel_comp
-    else:
-        return np.argmax(probs, axis=1)

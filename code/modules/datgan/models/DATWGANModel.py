@@ -31,10 +31,10 @@ class DATWGANModel(DATSGANModel):
         num_gen_hidden=50,
         num_dis_layers=1,
         num_dis_hidden=100,
-        training=True
+        noisy_training='WI'
     ):
         super().__init__(metadata, dag, batch_size, z_dim, noise, l2norm, learning_rate,
-                         num_gen_rnn, num_gen_hidden, num_dis_layers, num_dis_hidden, training)
+                         num_gen_rnn, num_gen_hidden, num_dis_layers, num_dis_hidden, noisy_training)
         """Initialize the object, set arguments as attributes."""
 
     def build_losses(self, vecs_real, vecs_fake):

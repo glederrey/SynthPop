@@ -33,10 +33,10 @@ class DATWGANGPModel(DATSGANModel):
         num_dis_layers=1,
         num_dis_hidden=100,
         lambda_=10,
-        training=True
+        noisy_training='WI'
     ):
         super().__init__(metadata, dag, batch_size, z_dim, noise, l2norm, learning_rate,
-                         num_gen_rnn, num_gen_hidden, num_dis_layers, num_dis_hidden, training)
+                         num_gen_rnn, num_gen_hidden, num_dis_layers, num_dis_hidden, noisy_training)
         """Initialize the object, set arguments as attributes."""
         self.lambda_ = lambda_
 

@@ -34,7 +34,7 @@ class DATSGANModel(ModelDescBase):
         num_gen_hidden=50,
         num_dis_layers=1,
         num_dis_hidden=100,
-        training=True
+        noisy_training='WI'
     ):
         """Initialize the object, set arguments as attributes."""
         self.metadata = metadata
@@ -48,7 +48,7 @@ class DATSGANModel(ModelDescBase):
         self.num_gen_hidden = num_gen_hidden
         self.num_dis_layers = num_dis_layers
         self.num_dis_hidden = num_dis_hidden
-        self.training = training
+        self.noisy_training = noisy_training
 
     def collect_variables(self, g_scope='gen', d_scope='discrim'):
         """
@@ -447,23 +447,22 @@ class DATSGANModel(ModelDescBase):
         KL = 0.0
         ptr = 0
 
-        if self.training:
-            # Go through all variables
-            for col_id, col in enumerate(self.metadata['details'].keys()):
-                # Get info
-                col_info = self.metadata['details'][col]
+        # Go through all variables
+        for col_id, col in enumerate(self.metadata['details'].keys()):
+            # Get info
+            col_info = self.metadata['details'][col]
 
-                if col_info['type'] == 'continuous':
-                    # Skip the value. We only compute the KL on the probability vector
-                    ptr += 1
-
-                dist = tf.reduce_sum(vecs_fake[ptr], axis=0)
-                dist = dist / tf.reduce_sum(dist)
-
-                real = tf.reduce_sum(vecs_real[ptr], axis=0)
-                real = real / tf.reduce_sum(real)
-                KL += self.compute_kl(real, dist)
+            if col_info['type'] == 'continuous':
+                # Skip the value. We only compute the KL on the probability vector
                 ptr += 1
+
+            dist = tf.reduce_sum(vecs_fake[ptr], axis=0)
+            dist = dist / tf.reduce_sum(dist)
+
+            real = tf.reduce_sum(vecs_real[ptr], axis=0)
+            real = real / tf.reduce_sum(real)
+            KL += self.compute_kl(real, dist)
+            ptr += 1
 
         return KL
 
@@ -504,7 +503,7 @@ class DATSGANModel(ModelDescBase):
                 # FAKE
                 val = vecs_gen[ptr]
 
-                if self.training:
+                if self.noisy_training == 'WI':
                     noise = tf.random_uniform(tf.shape(val), minval=0, maxval=self.noise)
                     val = (val + noise) / tf.reduce_sum(val + noise, keepdims=True, axis=1)
 
@@ -513,7 +512,7 @@ class DATSGANModel(ModelDescBase):
                 # REAL
                 one_hot = tf.one_hot(tf.reshape(inputs[ptr], [-1]), col_info['n'])
 
-                if self.training:
+                if self.noisy_training in ['WI', 'OR']:
                     noise = tf.random_uniform(tf.shape(one_hot), minval=0, maxval=self.noise)
                     one_hot = (one_hot + noise) / tf.reduce_sum(one_hot + noise, keepdims=True, axis=1)
 

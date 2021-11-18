@@ -69,7 +69,7 @@ class DATSGAN:
         self, continuous_columns, output='output', gpu=None, max_epoch=5, steps_per_epoch=None,
         save_checkpoints=True, restore_session=True, batch_size=200, z_dim=200, noise=0.2,
         l2norm=0.00001, learning_rate=0.001, num_gen_rnn=100, num_gen_hidden=50,
-        num_dis_layers=1, num_dis_hidden=100
+        num_dis_layers=1, num_dis_hidden=100, noisy_training='WI'
     ):
         """Initialize object."""
         # Output
@@ -109,7 +109,12 @@ class DATSGAN:
         # What changes between DATGAN and DATWGAN
         self.trainer = GANTrainerClipping
 
-    def get_model(self, training=True):
+        # Parameters for generating results
+        self.noisy_training = noisy_training
+        if self.noisy_training not in ['WI', 'WO', 'OR']:
+            raise ValueError("'noisy_training' must take value 'WI', 'WO', or 'OR'!")
+
+    def get_model(self):
         """Return a new instance of the model."""
         return DATSGANModel(
             metadata=self.metadata,
@@ -123,7 +128,7 @@ class DATSGAN:
             num_gen_hidden=self.num_gen_hidden,
             num_dis_layers=self.num_dis_layers,
             num_dis_hidden=self.num_dis_hidden,
-            training=training
+            noisy_training=self.noisy_training,
         )
 
     def fit(self, data, dag):
@@ -184,7 +189,7 @@ class DATSGAN:
         batch_data = BatchData(dataflow, self.batch_size)
         input_queue = QueueInput(batch_data)
 
-        self.model = self.get_model(training=True)
+        self.model = self.get_model()
 
         trainer = self.trainer(
             input=input_queue,
@@ -227,10 +232,7 @@ class DATSGAN:
     def prepare_sampling(self):
         """Prepare model to generate samples."""
         if self.model is None:
-            self.model = self.get_model(training=False)
-
-        else:
-            self.model.training = False
+            self.model = self.get_model()
 
         predict_config = PredictConfig(
             session_init=SaverRestore(self.restore_path),
@@ -238,22 +240,14 @@ class DATSGAN:
             input_names=['z'],
             output_names=['output', 'z'],
         )
-        # MULTI NOISE
+
         n_vars = len(self.metadata['details'].keys())
         self.simple_dataset_predictor = SimpleDatasetPredictor(
             predict_config,
             RandomZData((n_vars, self.batch_size, self.z_dim))
         )
 
-        # ONE NOISE
-        """
-        self.simple_dataset_predictor = SimpleDatasetPredictor(
-            predict_config,
-            RandomZData((self.batch_size, self.z_dim))
-        )
-        """
-
-    def sample(self, num_samples):
+    def sample(self, num_samples, argmax_sampling='NO'):
         """Generate samples from model.
 
         Args:
@@ -270,6 +264,11 @@ class DATSGAN:
         # Load preprocessor
         with open(os.path.join(self.data_dir, 'preprocessor.pkl'), 'rb') as f:
             self.preprocessor = pickle.load(f)
+
+        if argmax_sampling not in ['BO', 'NO', 'OD']:
+            raise ValueError("'argmax_sampling' must take value 'BO', 'NO', or 'OD'!")
+
+        self.preprocessor.set_sampling_technique(argmax_sampling)
         self.metadata = self.preprocessor.metadata
 
         max_iters = (num_samples // self.batch_size)
