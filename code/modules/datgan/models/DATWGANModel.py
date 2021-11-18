@@ -28,15 +28,13 @@ class DATWGANModel(DATSGANModel):
         l2norm=0.00001,
         learning_rate=0.001,
         num_gen_rnn=100,
-        num_gen_feature=100,
+        num_gen_hidden=50,
         num_dis_layers=1,
         num_dis_hidden=100,
-        optimizer='RMS',
         training=True
     ):
         super().__init__(metadata, dag, batch_size, z_dim, noise, l2norm, learning_rate,
-                         num_gen_rnn, num_gen_feature, num_dis_layers, num_dis_hidden,
-                         optimizer, training)
+                         num_gen_rnn, num_gen_hidden, num_dis_layers, num_dis_hidden, training)
         """Initialize the object, set arguments as attributes."""
 
     def build_losses(self, vecs_real, vecs_fake):
@@ -70,4 +68,4 @@ class DATWGANModel(DATSGANModel):
             self.g_loss = tf.add(self.g_loss, kl)
 
     def _get_optimizer(self):
-        return tf.train.RMSPropOptimizer(1e-4)
+        return tf.train.RMSPropOptimizer(self.learning_rate)

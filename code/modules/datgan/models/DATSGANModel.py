@@ -31,10 +31,9 @@ class DATSGANModel(ModelDescBase):
         l2norm=0.00001,
         learning_rate=0.001,
         num_gen_rnn=100,
-        num_gen_feature=100,
+        num_gen_hidden=50,
         num_dis_layers=1,
         num_dis_hidden=100,
-        optimizer='AdamOptimizer',
         training=True
     ):
         """Initialize the object, set arguments as attributes."""
@@ -46,10 +45,9 @@ class DATSGANModel(ModelDescBase):
         self.l2norm = l2norm
         self.learning_rate = learning_rate
         self.num_gen_rnn = num_gen_rnn
-        self.num_gen_feature = num_gen_feature
+        self.num_gen_hidden = num_gen_hidden
         self.num_dis_layers = num_dis_layers
         self.num_dis_hidden = num_dis_hidden
-        self.optimizer = optimizer
         self.training = training
 
     def collect_variables(self, g_scope='gen', d_scope='discrim'):
@@ -190,19 +188,15 @@ class DATSGANModel(ModelDescBase):
         with tf.variable_scope('LSTM'):
 
             # Some variables
-            outputs = []
+            outputs = []  # Treated output ready to post_process
+            lstm_outputs = {}  # Resized output (not ready for post-processing yet)
             states = {}
-
-            inputs = []
-            attentions = []
-            name_to_id = {}
-
-            #zero_input = tf.get_variable(name='zero_input', shape=(1, self.num_gen_feature))
+            inputs = {}
 
             # Go through all variables
             for col_id, col in enumerate(self.metadata['details'].keys()):
 
-                cell = tf.nn.rnn_cell.LSTMCell(self.num_gen_rnn, name=col)
+                cell = tf.nn.rnn_cell.LSTMCell(self.num_gen_rnn, name='LSTM_cell')
 
                 ancestors = nx.ancestors(self.dag, col)
 
@@ -212,148 +206,122 @@ class DATSGANModel(ModelDescBase):
 
                 # Get info
                 col_info = self.metadata['details'][col]
-                name_to_id[col] = col_id
-
-                input = None
-                attention = None
-                state = None
-                ancestor_states = None
 
                 if len(in_edges[col]) <= 1:
                     # Standard procedure as for the TGAN
 
                     # Get the inputs, attention and state vector in function of the number of in edges
                     if len(in_edges[col]) == 0:
-                        input = tf.get_variable(name='zero.input-{}'.format(col), shape=(1, self.num_gen_feature))
+                        input = tf.get_variable(name='f0-{}'.format(col), shape=(1, self.num_gen_rnn))
                         input = tf.tile(input, [self.batch_size, 1])
-                        #input = tf.tile(zero_input, [self.batch_size, 1])
-                        attention = tf.zeros(shape=(self.batch_size, self.num_gen_rnn), dtype='float32', name='zero.attention-{}'.format(col))
                         # LSTM state
                         state = cell.zero_state(self.batch_size, dtype='float32')
                     else:
-                        id_ = name_to_id[in_edges[col][0]]
-                        input = inputs[id_]
-                        attention = attentions[id_]
+                        ancestor_col = in_edges[col][0]
+                        input = inputs[ancestor_col]
                         # LSTM state
-                        state = states[in_edges[col][0]]
-
-                    # Compute the previous states
-                    ancestor_states = []
-                    for n in self.dag.nodes:
-                        if n in ancestors:
-                            ancestor_states.append(states[n][-1])
+                        state = tf.nn.rnn_cell.LSTMStateTuple(states[ancestor_col], lstm_outputs[ancestor_col])
                 else:
-                    # Compute the previous states
-                    ancestors = nx.ancestors(self.dag, col)
-                    ancestor_states = []
-                    for n in self.dag.nodes:
-                        if n in ancestors:
-                            ancestor_states.append(states[n][-1])
 
                     # Go through all in edges to get input, attention and state
                     miLSTM_states = []
                     miLSTM_inputs = []
-                    miLSTM_attentions = []
+                    miLSTM_lstm_outputs = []
                     for name in in_edges[col]:
-                        id_ = name_to_id[name]
-                        miLSTM_inputs.append(inputs[id_])
-                        miLSTM_attentions.append(attentions[id_])
-                        # LSTM state
+                        miLSTM_inputs.append(inputs[name])
                         miLSTM_states.append(states[name])
+                        miLSTM_lstm_outputs.append(lstm_outputs[name])
 
                     # Concatenate the inputs, attention and states
                     with tf.variable_scope("concat-{}".format(col)):
                         # FC for inputs
                         tmp = tf.concat(miLSTM_inputs, axis=1)
-                        tmp_fc = FullyConnected('FC_inputs', tmp, self.num_gen_feature, nl=None)
-                        input = tmp_fc
-
-                        # FC for attentions
-                        tmp = tf.concat(miLSTM_attentions, axis=1)
-                        tmp_fc = FullyConnected('FC_attentions', tmp, self.num_gen_rnn, nl=None)
-                        attention = tmp_fc
+                        input = FullyConnected('FC_inputs', tmp, self.num_gen_rnn, nl=None)
 
                         # FC for states
-                        tmp_states = []
-                        # miLSTM_states is a list of list of tuples
-                        for j in range(len(miLSTM_states[0])):
-                            tmp = []
-                            for i in range(len(miLSTM_states)):
-                                tmp.append(miLSTM_states[i][j])
+                        tmp = tf.concat(miLSTM_states, axis=1)
+                        tmp_sta = FullyConnected('FC_states', tmp, self.num_gen_rnn, nl=None)
 
-                            tmp_fc = FullyConnected('FC_lstm_state_{}'.format(j), tf.concat(tmp, axis=1),
-                                                    self.num_gen_rnn, nl=None)
+                        # FC for lstm_outputs
+                        tmp = tf.concat(miLSTM_lstm_outputs, axis=1)
+                        tmp_out = FullyConnected('FC_h_outputs', tmp, self.num_gen_rnn, nl=None)
 
-                            tmp_states.append(tmp_fc)
+                        # Transform states and h_outputs in LSTMStateTuple
+                        state = tf.nn.rnn_cell.LSTMStateTuple(tmp_sta, tmp_out)
 
-                        state = tf.nn.rnn_cell.LSTMStateTuple(tmp_states[0], tmp_states[1])
+                # Compute the previous outputs
+                ancestor_outputs = []
+                for n in self.dag.nodes:
+                    if n in ancestors:
+                        ancestor_outputs.append(lstm_outputs[n])
 
-                # Concat the input with the random variable z
-                # MULTI NOISE
-                input = tf.concat([input, z[col_id]], axis=1)
+                with tf.variable_scope(col):
 
-                # ONE NOISE
-                # input = tf.concat([input, z], axis=1)
+                    # Learn the attention vector
+                    if len(ancestor_outputs) == 0:
+                        attention = tf.zeros(shape=(self.batch_size, self.num_gen_rnn), dtype='float32',
+                                             name='att0-{}'.format(col))
+                    else:
+                        alpha = tf.get_variable("alpha", shape=(len(ancestor_outputs), 1, 1))
+                        alpha = tf.nn.softmax(alpha, axis=0, name='softmax-alpha')
+                        attention = tf.reduce_sum(tf.stack(ancestor_outputs, axis=0) * alpha, axis=0,
+                                                  name='att-{}'.format(col))
 
-                [new_attention, new_state, new_inputs, new_outputs] = self.create_cell(cell, col, col_info, input,
-                                                                                        attention, ancestor_states,
-                                                                                        state)
+                    # Concat the input with the random variable z and the attention vector
+                    input = tf.concat([input, z[col_id], attention], axis=1)
+
+                    [new_output, new_input, new_lstm_output, new_state] = self.create_cell(cell, col, col_info, input, state)
 
                 # Add the input to the list of inputs
-                inputs.append(new_inputs)
-
-                # Add the attention to the list of attentions
-                attentions.append(new_attention)
+                inputs[col] = new_input
 
                 # Add the state to the list of states
                 states[col] = new_state
 
-                # Add the list of outputs to the outputs
-                for o in new_outputs:
+                # Add the h_outputs to the list of h_outputs
+                lstm_outputs[col] = new_lstm_output
+
+                # Add the list of outputs to the outputs (to be used when post-processing)
+                for o in new_output:
                     outputs.append(o)
 
         return outputs
 
-    def create_cell(self, cell, col, col_info, inputs, attention, ancestor_states, state):
+    def create_cell(self, cell, col, col_info, input, state):
         """
         Function that create the cells for the generator.
         """
 
         # Use the LSTM cell
-        output, state = cell(tf.concat([inputs, attention], axis=1), state)
-        ancestor_states.append(state[1])
-        new_states = state
-        new_outputs = []
-        with tf.variable_scope(col):
-            h = FullyConnected('FC', output, self.num_gen_feature, nl=tf.tanh)
+        output, new_state = cell(input, state)
+        outputs = []
 
-            # For cont. var, we need to get the probability and the values
-            if col_info['type'] == 'continuous':
-                w_val = FullyConnected('FC2_val', h, col_info['n'], nl=tf.tanh)
-                w_prob = FullyConnected('FC2_prob', h, col_info['n'], nl=tf.nn.softmax)
+        hidden = FullyConnected('FC', output, self.num_gen_hidden, nl=tf.tanh)
 
-                # 2 outputs here
-                new_outputs.append(w_val)
-                new_outputs.append(w_prob)
+        # For cont. var, we need to get the probability and the values
+        if col_info['type'] == 'continuous':
+            w_val = FullyConnected('FC_val', hidden, col_info['n'], nl=tf.tanh)
+            w_prob = FullyConnected('FC_prob', hidden, col_info['n'], nl=tf.nn.softmax)
 
-                w = tf.concat([w_val, w_prob], axis=1)
-            # For cat. var, we only need the probability
-            elif col_info['type'] == 'category':
-                w = FullyConnected('FC2', h, col_info['n'], nl=tf.nn.softmax)
-                new_outputs.append(w)
+            # 2 outputs here
+            outputs.append(w_val)
+            outputs.append(w_prob)
 
-            else:
-                raise ValueError(
-                    "self.metadata['details'][{}]['type'] must be either `category` or "
-                    "`continuous`. Instead it was {}.".format(col, col_info['type'])
-                )
+            w = tf.concat([w_val, w_prob], axis=1)
+        # For cat. var, we only need the probability
+        elif col_info['type'] == 'category':
+            w = FullyConnected('FC_prob', hidden, col_info['n'], nl=tf.nn.softmax)
+            outputs.append(w)
 
-            new_input = FullyConnected('FC3', w, self.num_gen_feature, nl=tf.identity)
-            attw = tf.get_variable("attw", shape=(len(ancestor_states), 1, 1))
-            attw = tf.nn.softmax(attw, axis=0, name='softmax-attw')
-            new_attention = tf.reduce_sum(tf.stack(ancestor_states, axis=0) * attw, axis=0, name='new-att')
+        else:
+            raise ValueError(
+                "self.metadata['details'][{}]['type'] must be either `category` or "
+                "`continuous`. Instead it was {}.".format(col, col_info['type'])
+            )
 
-        return new_attention, new_states, new_input, new_outputs
+        next_input = FullyConnected('FC_input', w, self.num_gen_rnn, nl=tf.identity)
+
+        return outputs, next_input, output, new_state[0]
 
     @staticmethod
     def batch_diversity(l, n_kernel=10, kernel_dim=10):
@@ -478,6 +446,7 @@ class DATSGANModel(ModelDescBase):
         # KL loss
         KL = 0.0
         ptr = 0
+
         if self.training:
             # Go through all variables
             for col_id, col in enumerate(self.metadata['details'].keys()):
@@ -514,10 +483,6 @@ class DATSGANModel(ModelDescBase):
         z = tf.random_normal([n_vars, self.batch_size, self.z_dim], name='z_train')
         z = tf.placeholder_with_default(z, [None, None, self.z_dim], name='z')
 
-        # ONE NOISE
-        #z = tf.random_normal([self.batch_size, self.z_dim], name='z_train')
-        #z = tf.placeholder_with_default(z, [None, self.z_dim], name='z')
-
         # Create the output for the model
         with tf.variable_scope('gen'):
             vecs_gen = self.generator(z)
@@ -542,6 +507,7 @@ class DATSGANModel(ModelDescBase):
                 if self.training:
                     noise = tf.random_uniform(tf.shape(val), minval=0, maxval=self.noise)
                     val = (val + noise) / tf.reduce_sum(val + noise, keepdims=True, axis=1)
+
                 vecs_fake.append(val)
 
                 # REAL
@@ -550,6 +516,7 @@ class DATSGANModel(ModelDescBase):
                 if self.training:
                     noise = tf.random_uniform(tf.shape(one_hot), minval=0, maxval=self.noise)
                     one_hot = (one_hot + noise) / tf.reduce_sum(one_hot + noise, keepdims=True, axis=1)
+
                 vecs_real.append(one_hot)
 
                 ptr += 1
@@ -647,13 +614,5 @@ class DATSGANModel(ModelDescBase):
 
             add_moving_summary(g_loss, extra_g, self.g_loss, self.d_loss, d_pos_acc, d_neg_acc, decay=0.)
 
-
     def _get_optimizer(self):
-        if self.optimizer == 'AdamOptimizer':
-            return tf.train.AdamOptimizer(self.learning_rate, beta1=0.5, beta2=0.9)
-
-        elif self.optimizer == 'AdadeltaOptimizer':
-            return tf.train.AdadeltaOptimizer(self.learning_rate, 0.95)
-
-        else:
-            return tf.train.GradientDescentOptimizer(self.learning_rate)
+        return tf.train.AdamOptimizer(self.learning_rate, beta1=0.5, beta2=0.9)

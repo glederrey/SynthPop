@@ -55,12 +55,12 @@ class DATWGANGP(DATSGAN):
 
     def __init__(self, continuous_columns, output='output', gpu=None, max_epoch=5, steps_per_epoch=None,
                  save_checkpoints=True, restore_session=True, batch_size=200, z_dim=200, noise=0.2,
-                 l2norm=0.00001, learning_rate=1e-3, num_gen_rnn=100, num_gen_feature=100,
-                 num_dis_layers=1, num_dis_hidden=100, optimizer='AdamOptimizer', lambda_=10):
+                 l2norm=0.00001, learning_rate=1e-4, num_gen_rnn=100, num_gen_hidden=50,
+                 num_dis_layers=1, num_dis_hidden=100, lambda_=10):
 
         super().__init__(continuous_columns, output, gpu, max_epoch, steps_per_epoch, save_checkpoints,
                          restore_session, batch_size, z_dim, noise, l2norm, learning_rate, num_gen_rnn,
-                         num_gen_feature, num_dis_layers, num_dis_hidden, optimizer)
+                         num_gen_hidden, num_dis_layers, num_dis_hidden)
 
         self.lambda_ = lambda_
         # We use a separate trainer for the DATWGAN to train the discirminator more often
@@ -77,10 +77,9 @@ class DATWGANGP(DATSGAN):
             l2norm=self.l2norm,
             learning_rate=self.learning_rate,
             num_gen_rnn=self.num_gen_rnn,
-            num_gen_feature=self.num_gen_feature,
+            num_gen_hidden=self.num_gen_hidden,
             num_dis_layers=self.num_dis_layers,
             num_dis_hidden=self.num_dis_hidden,
-            optimizer=self.optimizer,
             lambda_=self.lambda_,
             training=training
         )

@@ -260,7 +260,6 @@ class MultiModalNumberTransformer:
             # Check that the weights are large enough
             w = model.weights_ > 1e-2
 
-            # Choose what to do
             if len(pred_) != n_modes:
                 n_modes = len(pred_)
                 logger.info(
@@ -305,7 +304,7 @@ class MultiModalNumberTransformer:
         normalized_values = data[:, :n_modes]
         probs = data[:, n_modes:]
 
-        selected_component = select_values(probs, simulation=True)
+        selected_component = select_values(probs, simulation=False)
 
         means = gmm.means_.reshape([-1])
         stds = np.sqrt(gmm.covariances_).reshape([-1])
@@ -459,7 +458,6 @@ def select_values(probs, simulation=True):
     if simulation:
         probs = probs + 1e-6
         probs = np.divide(probs, np.sum(probs, axis=1).reshape((-1, 1)))
-        #sel_comp = [np.random.choice(np.arange(len(p)), p=p) for p in probs]
         c = probs.cumsum(axis=1)
         u = np.random.rand(len(c), 1)
         sel_comp = (u < c).argmax(axis=1)

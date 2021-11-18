@@ -68,8 +68,8 @@ class DATSGAN:
     def __init__(
         self, continuous_columns, output='output', gpu=None, max_epoch=5, steps_per_epoch=None,
         save_checkpoints=True, restore_session=True, batch_size=200, z_dim=200, noise=0.2,
-        l2norm=0.00001, learning_rate=0.001, num_gen_rnn=100, num_gen_feature=100,
-        num_dis_layers=1, num_dis_hidden=100, optimizer='AdamOptimizer',
+        l2norm=0.00001, learning_rate=0.001, num_gen_rnn=100, num_gen_hidden=50,
+        num_dis_layers=1, num_dis_hidden=100
     ):
         """Initialize object."""
         # Output
@@ -97,10 +97,9 @@ class DATSGAN:
         self.l2norm = l2norm
         self.learning_rate = learning_rate
         self.num_gen_rnn = num_gen_rnn
-        self.num_gen_feature = num_gen_feature
+        self.num_gen_hidden = num_gen_hidden
         self.num_dis_layers = num_dis_layers
         self.num_dis_hidden = num_dis_hidden
-        self.optimizer = optimizer
 
         if gpu:
             os.environ['CUDA_VISIBLE_DEVICES'] = gpu
@@ -121,10 +120,9 @@ class DATSGAN:
             l2norm=self.l2norm,
             learning_rate=self.learning_rate,
             num_gen_rnn=self.num_gen_rnn,
-            num_gen_feature=self.num_gen_feature,
+            num_gen_hidden=self.num_gen_hidden,
             num_dis_layers=self.num_dis_layers,
             num_dis_hidden=self.num_dis_hidden,
-            optimizer=self.optimizer,
             training=training
         )
 
@@ -279,10 +277,12 @@ class DATSGAN:
         results = []
         for idx, o in enumerate(self.simple_dataset_predictor.get_result()):
             results.append(o[0])
-            if idx + 1 == max_iters:
+            if idx == max_iters:
                 break
 
         results = np.concatenate(results, axis=0)
+        # Reduce results to num_samples
+        results = results[:num_samples]
 
         ptr = 0
         features = {}

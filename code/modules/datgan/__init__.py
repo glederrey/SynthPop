@@ -9,4 +9,3 @@ __version__ = '0.1.1-dev'
 from .DATSGAN import DATSGAN
 from .DATWGAN import DATWGAN
 from .DATWGANGP import DATWGANGP
-from .DATDRAGAN import DATDRAGAN

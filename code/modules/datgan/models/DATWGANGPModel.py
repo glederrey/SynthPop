@@ -29,18 +29,16 @@ class DATWGANGPModel(DATSGANModel):
         l2norm=0.00001,
         learning_rate=0.001,
         num_gen_rnn=100,
-        num_gen_feature=100,
+        num_gen_hidden=50,
         num_dis_layers=1,
         num_dis_hidden=100,
-        optimizer='AdamOptimizer',
         lambda_=10,
         training=True
     ):
         super().__init__(metadata, dag, batch_size, z_dim, noise, l2norm, learning_rate,
-                         num_gen_rnn, num_gen_feature, num_dis_layers, num_dis_hidden,
-                         optimizer, training)
+                         num_gen_rnn, num_gen_hidden, num_dis_layers, num_dis_hidden, training)
         """Initialize the object, set arguments as attributes."""
-        self.lambda_ = 100#lambda_
+        self.lambda_ = lambda_
 
     @auto_reuse_variable_scope
     def discriminator(self, vecs):
@@ -114,16 +112,10 @@ class DATWGANGPModel(DATSGANModel):
         vecs_real = tf.concat(vecs_real, axis=1)
         vecs_fake = tf.concat(vecs_fake, axis=1)
 
-        # Alpha only takes value 0 or 1
-        alpha = tf.cast(tf.random.uniform(shape=[self.batch_size, 1], minval=0, maxval=1, dtype=tf.int32), dtype=tf.float32)
-        vecs_interp = alpha*vecs_real + (tf.ones(shape=alpha.shape)-alpha)*vecs_fake
-
-        """ OLD way for GP
         alpha = tf.random_uniform(shape=[self.batch_size, 1], minval=0., maxval=1.)
 
         # Compute diff between real and fake data
         vecs_interp = vecs_real + alpha * (vecs_fake - vecs_real)
-        """
 
         with tf.variable_scope('discrim'):
             d_logit_real = self.discriminator(vecs_real)
@@ -149,11 +141,4 @@ class DATWGANGPModel(DATSGANModel):
             self.g_loss = tf.add(self.g_loss, kl)
 
     def _get_optimizer(self):
-        if self.optimizer == 'AdamOptimizer':
-            return tf.train.AdamOptimizer(self.learning_rate, beta1=0, beta2=0.9)
-
-        elif self.optimizer == 'AdadeltaOptimizer':
-            return tf.train.AdadeltaOptimizer(self.learning_rate, 0.95)
-
-        else:
-            return tf.train.GradientDescentOptimizer(self.learning_rate)
+        return tf.train.AdamOptimizer(self.learning_rate, beta1=0.5, beta2=0.9)
