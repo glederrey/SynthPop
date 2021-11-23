@@ -221,6 +221,9 @@ class DATSGAN:
 
         self.prepare_sampling()
 
+        # Close the log file from the logger of tensorpack
+
+
     def get_callbacks(self):
 
         callbacks = []

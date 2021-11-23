@@ -71,6 +71,8 @@ class DATWGAN(DATSGAN):
         # We use a separate trainer for the DATWGAN to train the discirminator more often
         self.trainer = partial(SeparateGANTrainer, g_period=3)
 
+
+
     def get_model(self, training=True):
         """Return a new instance of the model."""
         return DATWGANModel(
