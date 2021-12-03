@@ -50,6 +50,10 @@ class DATSGANModel(ModelDescBase):
         self.num_dis_hidden = num_dis_hidden
         self.noisy_training = noisy_training
 
+        # Get the number of sources
+        self.source_nodes = [node for node, in_degree in self.dag.in_degree() if in_degree == 0]
+        self.n_sources = len(self.source_nodes)
+
     def collect_variables(self, g_scope='gen', d_scope='discrim'):
         """
         Assign generator and discriminator variables from their scopes.
@@ -192,6 +196,10 @@ class DATSGANModel(ModelDescBase):
             lstm_outputs = {}  # Resized output (not ready for post-processing yet)
             states = {}
             inputs = {}
+            noises = {}
+
+            for i, n in enumerate(self.source_nodes):
+                noises[n] = z[i]
 
             # Go through all variables
             for col_id, col in enumerate(self.metadata['details'].keys()):
@@ -212,12 +220,14 @@ class DATSGANModel(ModelDescBase):
 
                     # Get the inputs, attention and state vector in function of the number of in edges
                     if len(in_edges[col]) == 0:
+                        # Input
                         input = tf.get_variable(name='f0-{}'.format(col), shape=(1, self.num_gen_rnn))
                         input = tf.tile(input, [self.batch_size, 1])
                         # LSTM state
                         state = cell.zero_state(self.batch_size, dtype='float32')
                     else:
                         ancestor_col = in_edges[col][0]
+                        # Input
                         input = inputs[ancestor_col]
                         # LSTM state
                         state = tf.nn.rnn_cell.LSTMStateTuple(states[ancestor_col], lstm_outputs[ancestor_col])
@@ -255,6 +265,32 @@ class DATSGANModel(ModelDescBase):
                     if n in ancestors:
                         ancestor_outputs.append(lstm_outputs[n])
 
+                # Compute the noise
+                src_nodes = set(ancestors).intersection(set(self.source_nodes))
+                src_nodes = list(src_nodes)
+
+                if len(src_nodes) == 0:
+                    noise = noises[col]
+                elif len(src_nodes) == 1:
+                    noise = noises[src_nodes[0]]
+                else:
+                    src_nodes.sort()
+                    str_ = '-'.join(src_nodes)
+
+                    # Check if the noise was already computed
+                    if str_ in noises:
+                        noise = noises[str_]
+                    else:
+                        # If not the case, we compute the noise by passing it through a FC
+                        with tf.variable_scope(str_):
+                            tmp_noises = []
+                            for n in src_nodes:
+                                tmp_noises.append(noises[n])
+
+                            tmp = tf.concat(tmp_noises, axis=1)
+                            noise = FullyConnected('FC_noise', tmp, self.z_dim, nl=None)
+                            noises[str_] = noise
+
                 with tf.variable_scope(col):
 
                     # Learn the attention vector
@@ -267,8 +303,8 @@ class DATSGANModel(ModelDescBase):
                         attention = tf.reduce_sum(tf.stack(ancestor_outputs, axis=0) * alpha, axis=0,
                                                   name='att-{}'.format(col))
 
-                    # Concat the input with the random variable z and the attention vector
-                    input = tf.concat([input, z[col_id], attention], axis=1)
+                    # Concat the input with the attention vector
+                    input = tf.concat([input, noise, attention], axis=1)
 
                     [new_output, new_input, new_lstm_output, new_state] = self.create_cell(cell, col, col_info, input, state)
 
@@ -478,8 +514,7 @@ class DATSGANModel(ModelDescBase):
         """
 
         # MULTI NOISE
-        n_vars = len(self.metadata['details'].keys())
-        z = tf.random_normal([n_vars, self.batch_size, self.z_dim], name='z_train')
+        z = tf.random_normal([self.n_sources, self.batch_size, self.z_dim], name='z_train')
         z = tf.placeholder_with_default(z, [None, None, self.z_dim], name='z')
 
         # Create the output for the model

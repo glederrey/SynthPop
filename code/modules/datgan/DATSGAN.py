@@ -68,7 +68,7 @@ class DATSGAN:
     def __init__(
         self, continuous_columns, output='output', gpu=None, max_epoch=5, steps_per_epoch=None,
         save_checkpoints=True, restore_session=True, batch_size=200, z_dim=200, noise=0.2,
-        l2norm=0.00001, learning_rate=0.001, num_gen_rnn=100, num_gen_hidden=50,
+        l2norm=0.00001, learning_rate=1e-3, num_gen_rnn=100, num_gen_hidden=50,
         num_dis_layers=1, num_dis_hidden=100, noisy_training='WI'
     ):
         """Initialize object."""
@@ -82,6 +82,7 @@ class DATSGAN:
         # DAG
         self.dag = None
         self.var_order = None
+        self.n_sources = None
 
         # Training params
         self.max_epoch = max_epoch
@@ -247,7 +248,7 @@ class DATSGAN:
         n_vars = len(self.metadata['details'].keys())
         self.simple_dataset_predictor = SimpleDatasetPredictor(
             predict_config,
-            RandomZData((n_vars, self.batch_size, self.z_dim))
+            RandomZData((self.n_sources, self.batch_size, self.z_dim))
         )
 
     def sample(self, num_samples, argmax_sampling='NO'):
@@ -416,6 +417,8 @@ class DATSGAN:
 
         # Get all nodes with 0 in degree
         to_treat = [node for node, in_degree in self.dag.in_degree() if in_degree == 0]
+
+        self.n_sources = len(to_treat)
 
         while len(untreated) > 0:
             # remove the treated nodes

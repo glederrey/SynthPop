@@ -60,7 +60,7 @@ class DATWGAN(DATSGAN):
 
     def __init__(self, continuous_columns, output='output', gpu=None, max_epoch=5, steps_per_epoch=None,
                  save_checkpoints=True, restore_session=True, batch_size=200, z_dim=200, noise=0.2,
-                 l2norm=0.00001, learning_rate=1e-4, num_gen_rnn=100, num_gen_hidden=50,
+                 l2norm=0.00001, learning_rate=2e-4, num_gen_rnn=100, num_gen_hidden=50,
                  num_dis_layers=1, num_dis_hidden=100, noisy_training='WI'
     ):
 
