@@ -141,4 +141,4 @@ class DATWGANGPModel(DATSGANModel):
             self.g_loss = tf.add(self.g_loss, kl)
 
     def _get_optimizer(self):
-        return tf.train.AdamOptimizer(self.learning_rate, beta1=0.5, beta2=0.9)
+        return tf.train.AdamOptimizer(self.learning_rate, beta1=0, beta2=0.9)

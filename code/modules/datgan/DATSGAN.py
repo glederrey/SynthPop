@@ -269,8 +269,8 @@ class DATSGAN:
         with open(os.path.join(self.data_dir, 'preprocessor.pkl'), 'rb') as f:
             self.preprocessor = pickle.load(f)
 
-        if argmax_sampling not in ['BO', 'NO', 'OD']:
-            raise ValueError("'argmax_sampling' must take value 'BO', 'NO', or 'OD'!")
+        if argmax_sampling not in ['BO', 'NO', 'OD', 'OC']:
+            raise ValueError("'argmax_sampling' must take value 'BO', 'NO', 'OC', or 'OD'!")
 
         self.preprocessor.set_sampling_technique(argmax_sampling)
         self.metadata = self.preprocessor.metadata

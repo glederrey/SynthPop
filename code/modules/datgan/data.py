@@ -352,9 +352,8 @@ class Preprocessor:
 
     def set_sampling_technique(self, argmax_sampling):
 
-
         self.categorical_argmax = (argmax_sampling in ['OD', 'BO'])
-        self.continous_transformer.simu = (argmax_sampling == 'BO')
+        self.continous_transformer.simu = (argmax_sampling in ['OC', 'BO'])
 
     def fit_transform(self, data, fitting=True):
         """Transform human-readable data into TGAN numerical features.
