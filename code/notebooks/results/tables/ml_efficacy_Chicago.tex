@@ -1,44 +1,53 @@
-\begin{table}[H]
-	\centering
-	\caption{Results for the Machine Learning efficacy for the CMAP dataset}
-	\label{tab:ml_efficacy_Chicago}
-	\begin{tabularx}{\textwidth}{l||CC|CC||c}
-	\multicolumn{1}{c||}{\textbf{Name}} & \multicolumn{2}{c|}{\textbf{Continuous}} & \multicolumn{2}{c||}{\textbf{Categorical}} & \multicolumn{1}{c}{\textbf{rank}}  \\ \midrule[1.5pt]
-		\texttt{SGAN\_NO\_BO} & \cellcolor{Gray!3}$\bf 02$ & \cellcolor{Gray!3}$\bf \num{3.04e+00}$ & \cellcolor{Gray!3}$\bf 02$ & \cellcolor{Gray!3}$\bf \num{6.23e-01}$ &\cellcolor{Gray!3}$\bf 2.0$  \\
-		\texttt{SGAN\_NO\_CO} & \cellcolor{Gray!9}$\bf 04$ & \cellcolor{Gray!9}$\bf \num{3.05e+00}$ & \cellcolor{Gray!9}$\bf 04$ & \cellcolor{Gray!9}$\bf \num{6.51e-01}$ &\cellcolor{Gray!9}$\bf 4.0$  \\
-		\texttt{SGAN\_NO\_CA} & \cellcolor{Gray!14}$\bf 06$ & \cellcolor{Gray!14}$\bf \num{3.06e+00}$ & \cellcolor{Gray!0}$\bf 01$ & \cellcolor{Gray!0}$\bf \num{6.15e-01}$ &\cellcolor{Gray!7}$\bf 3.5$  \\
-		\texttt{SGAN\_NO\_NO} & \cellcolor{Gray!23}$\bf 09$ & \cellcolor{Gray!23}$\bf \num{3.06e+00}$ & \cellcolor{Gray!6}$\bf 03$ & \cellcolor{Gray!6}$\bf \num{6.38e-01}$ &\cellcolor{Gray!14}$\bf 6.0$  \\
-		\texttt{SGAN\_OS\_BO} & \cellcolor{Gray!34}$ 13$ & \cellcolor{Gray!34}$ \num{3.07e+00}$ & \cellcolor{Gray!74}$ 27$ & \cellcolor{Gray!74}$ \num{1.61e+02}$ &\cellcolor{Gray!54}$ 20.0$  \\
-		\texttt{SGAN\_OS\_CO} & \cellcolor{Gray!74}$ 27$ & \cellcolor{Gray!74}$ \num{3.38e+00}$ & \cellcolor{Gray!63}$ 23$ & \cellcolor{Gray!63}$ \num{2.95e+00}$ &\cellcolor{Gray!69}$ 25.0$  \\
-		\texttt{SGAN\_OS\_CA} & \cellcolor{Gray!46}$ 17$ & \cellcolor{Gray!46}$ \num{3.13e+00}$ & \cellcolor{Gray!77}$ 28$ & \cellcolor{Gray!77}$ \num{4.01e+02}$ &\cellcolor{Gray!61}$ 22.5$  \\
-		\texttt{SGAN\_OS\_NO} & \cellcolor{Gray!77}$ 28$ & \cellcolor{Gray!77}$ \num{3.43e+00}$ & \cellcolor{Gray!66}$ 24$ & \cellcolor{Gray!66}$ \num{2.97e+00}$ &\cellcolor{Gray!71}$ 26.0$  \\
-		\texttt{SGAN\_TS\_BO} & \cellcolor{Gray!26}$\bf 10$ & \cellcolor{Gray!26}$\bf \num{3.06e+00}$ & \cellcolor{Gray!29}$ 11$ & \cellcolor{Gray!29}$ \num{7.25e-01}$ &\cellcolor{Gray!27}$ 10.5$  \\
-		\texttt{SGAN\_TS\_CO} & \cellcolor{Gray!17}$\bf 07$ & \cellcolor{Gray!17}$\bf \num{3.06e+00}$ & \cellcolor{Gray!31}$ 12$ & \cellcolor{Gray!31}$ \num{7.34e-01}$ &\cellcolor{Gray!24}$\bf 9.5$  \\
-		\texttt{SGAN\_TS\_CA} & \cellcolor{Gray!31}$ 12$ & \cellcolor{Gray!31}$ \num{3.07e+00}$ & \cellcolor{Gray!23}$\bf 09$ & \cellcolor{Gray!23}$\bf \num{7.02e-01}$ &\cellcolor{Gray!27}$ 10.5$  \\
-		\texttt{SGAN\_TS\_NO} & \cellcolor{Gray!37}$ 14$ & \cellcolor{Gray!37}$ \num{3.08e+00}$ & \cellcolor{Gray!26}$\bf 10$ & \cellcolor{Gray!26}$\bf \num{7.22e-01}$ &\cellcolor{Gray!31}$ 12.0$  \\ \hline
-		\texttt{WGAN\_NO\_BO} & \cellcolor{Gray!57}$ 21$ & \cellcolor{Gray!57}$ \num{3.16e+00}$ & \cellcolor{Gray!89}$ 32$ & \cellcolor{Gray!89}$ \num{7.04e+03}$ &\cellcolor{Gray!73}$ 26.5$  \\
-		\texttt{WGAN\_NO\_CO} & \cellcolor{Gray!51}$ 19$ & \cellcolor{Gray!51}$ \num{3.14e+00}$ & \cellcolor{Gray!46}$ 17$ & \cellcolor{Gray!46}$ \num{1.18e+00}$ &\cellcolor{Gray!49}$ 18.0$  \\
-		\texttt{WGAN\_NO\_CA} & \cellcolor{Gray!63}$ 23$ & \cellcolor{Gray!63}$ \num{3.17e+00}$ & \cellcolor{Gray!86}$ 31$ & \cellcolor{Gray!86}$ \num{6.64e+03}$ &\cellcolor{Gray!74}$ 27.0$  \\
-		\texttt{WGAN\_NO\_NO} & \cellcolor{Gray!60}$ 22$ & \cellcolor{Gray!60}$ \num{3.17e+00}$ & \cellcolor{Gray!49}$ 18$ & \cellcolor{Gray!49}$ \num{1.19e+00}$ &\cellcolor{Gray!54}$ 20.0$  \\
-		\texttt{WGAN\_OS\_BO} & \cellcolor{Gray!29}$ 11$ & \cellcolor{Gray!29}$ \num{3.07e+00}$ & \cellcolor{Gray!40}$ 15$ & \cellcolor{Gray!40}$ \num{8.78e-01}$ &\cellcolor{Gray!34}$ 13.0$  \\
-		\texttt{WGAN\_OS\_CO} & \cellcolor{Gray!69}$ 25$ & \cellcolor{Gray!69}$ \num{3.32e+00}$ & \cellcolor{Gray!57}$ 21$ & \cellcolor{Gray!57}$ \num{2.80e+00}$ &\cellcolor{Gray!63}$ 23.0$  \\
-		\texttt{WGAN\_OS\_CA} & \cellcolor{Gray!40}$ 15$ & \cellcolor{Gray!40}$ \num{3.08e+00}$ & \cellcolor{Gray!43}$ 16$ & \cellcolor{Gray!43}$ \num{8.92e-01}$ &\cellcolor{Gray!41}$ 15.5$  \\
-		\texttt{WGAN\_OS\_NO} & \cellcolor{Gray!71}$ 26$ & \cellcolor{Gray!71}$ \num{3.34e+00}$ & \cellcolor{Gray!60}$ 22$ & \cellcolor{Gray!60}$ \num{2.82e+00}$ &\cellcolor{Gray!66}$ 24.0$  \\
-		\texttt{WGAN\_TS\_BO} & \cellcolor{Gray!0}$\bf 01$ & \cellcolor{Gray!0}$\bf \num{3.04e+00}$ & \cellcolor{Gray!17}$\bf 07$ & \cellcolor{Gray!17}$\bf \num{6.78e-01}$ &\cellcolor{Gray!9}$\bf 4.0$  \\
-		\texttt{WGAN\_TS\_CO} & \cellcolor{Gray!6}$\bf 03$ & \cellcolor{Gray!6}$\bf \num{3.04e+00}$ & \cellcolor{Gray!34}$ 13$ & \cellcolor{Gray!34}$ \num{7.47e-01}$ &\cellcolor{Gray!20}$\bf 8.0$  \\
-		\texttt{WGAN\_TS\_CA} & \cellcolor{Gray!20}$\bf 08$ & \cellcolor{Gray!20}$\bf \num{3.06e+00}$ & \cellcolor{Gray!20}$\bf 08$ & \cellcolor{Gray!20}$\bf \num{6.87e-01}$ &\cellcolor{Gray!20}$\bf 8.0$  \\
-		\texttt{WGAN\_TS\_NO} & \cellcolor{Gray!11}$\bf 05$ & \cellcolor{Gray!11}$\bf \num{3.05e+00}$ & \cellcolor{Gray!37}$ 14$ & \cellcolor{Gray!37}$ \num{7.56e-01}$ &\cellcolor{Gray!24}$\bf 9.5$  \\ \hline
-		\texttt{WGGP\_NO\_BO} & \cellcolor{Gray!54}$ 20$ & \cellcolor{Gray!54}$ \num{3.15e+00}$ & \cellcolor{Gray!97}$ 35$ & \cellcolor{Gray!97}$ \num{1.13e+04}$ &\cellcolor{Gray!76}$ 27.5$  \\
-		\texttt{WGGP\_NO\_CO} & \cellcolor{Gray!43}$ 16$ & \cellcolor{Gray!43}$ \num{3.12e+00}$ & \cellcolor{Gray!14}$\bf 06$ & \cellcolor{Gray!14}$\bf \num{6.72e-01}$ &\cellcolor{Gray!29}$ 11.0$  \\
-		\texttt{WGGP\_NO\_CA} & \cellcolor{Gray!66}$ 24$ & \cellcolor{Gray!66}$ \num{3.18e+00}$ & \cellcolor{Gray!100}$ 36$ & \cellcolor{Gray!100}$ \num{1.23e+04}$ &\cellcolor{Gray!83}$ 30.0$  \\
-		\texttt{WGGP\_NO\_NO} & \cellcolor{Gray!49}$ 18$ & \cellcolor{Gray!49}$ \num{3.13e+00}$ & \cellcolor{Gray!11}$\bf 05$ & \cellcolor{Gray!11}$\bf \num{6.71e-01}$ &\cellcolor{Gray!30}$ 11.5$  \\
-		\texttt{WGGP\_OS\_BO} & \cellcolor{Gray!83}$ 30$ & \cellcolor{Gray!83}$ \num{3.89e+00}$ & \cellcolor{Gray!83}$ 30$ & \cellcolor{Gray!83}$ \num{4.48e+03}$ &\cellcolor{Gray!83}$ 30.0$  \\
-		\texttt{WGGP\_OS\_CO} & \cellcolor{Gray!100}$ 36$ & \cellcolor{Gray!100}$ \num{4.50e+00}$ & \cellcolor{Gray!69}$ 25$ & \cellcolor{Gray!69}$ \num{3.10e+00}$ &\cellcolor{Gray!84}$ 30.5$  \\
-		\texttt{WGGP\_OS\_CA} & \cellcolor{Gray!80}$ 29$ & \cellcolor{Gray!80}$ \num{3.87e+00}$ & \cellcolor{Gray!80}$ 29$ & \cellcolor{Gray!80}$ \num{4.08e+03}$ &\cellcolor{Gray!80}$ 29.0$  \\
-		\texttt{WGGP\_OS\_NO} & \cellcolor{Gray!97}$ 35$ & \cellcolor{Gray!97}$ \num{4.25e+00}$ & \cellcolor{Gray!71}$ 26$ & \cellcolor{Gray!71}$ \num{3.30e+00}$ &\cellcolor{Gray!84}$ 30.5$  \\
-		\texttt{WGGP\_TS\_BO} & \cellcolor{Gray!91}$ 33$ & \cellcolor{Gray!91}$ \num{4.10e+00}$ & \cellcolor{Gray!91}$ 33$ & \cellcolor{Gray!91}$ \num{8.00e+03}$ &\cellcolor{Gray!91}$ 33.0$  \\
-		\texttt{WGGP\_TS\_CO} & \cellcolor{Gray!94}$ 34$ & \cellcolor{Gray!94}$ \num{4.15e+00}$ & \cellcolor{Gray!54}$ 20$ & \cellcolor{Gray!54}$ \num{1.28e+00}$ &\cellcolor{Gray!74}$ 27.0$  \\
-		\texttt{WGGP\_TS\_CA} & \cellcolor{Gray!89}$ 32$ & \cellcolor{Gray!89}$ \num{3.94e+00}$ & \cellcolor{Gray!94}$ 34$ & \cellcolor{Gray!94}$ \num{8.80e+03}$ &\cellcolor{Gray!91}$ 33.0$  \\
-		\texttt{WGGP\_TS\_NO} & \cellcolor{Gray!86}$ 31$ & \cellcolor{Gray!86}$ \num{3.91e+00}$ & \cellcolor{Gray!51}$ 19$ & \cellcolor{Gray!51}$ \num{1.20e+00}$ &\cellcolor{Gray!69}$ 25.0$  \\
-	\end{tabularx}
-\end{table}
+\begin{xltabular}{\textwidth}{l||CC|CC||C}
+\caption{\normalsize Results of the Machine Learning efficacy for the CMAP dataset. Lighter grey tone corresponds to better results compared to darker ones.}
+\label{tab:ml_efficacy_Chicago}\\
+
+\multicolumn{1}{c||}{\textbf{Name}} & \multicolumn{2}{c|}{\textbf{Continuous}} & \multicolumn{2}{c||}{\textbf{Categorical}} & \multicolumn{1}{c}{\textbf{rank}}  \\ \midrule[1.5pt]
+\endfirsthead
+
+\multicolumn{6}{c}{\tablename\ \thetable{} -- continued from previous page} \\
+\multicolumn{1}{c||}{\textbf{Name}} & \multicolumn{2}{c|}{\textbf{Continuous}} & \multicolumn{2}{c||}{\textbf{Categorical}} & \multicolumn{1}{c}{\textbf{rank}}  \\ \midrule[1.5pt]
+\endhead
+
+\hline\multicolumn{6}{r}{{\normalsize Continues on next page...}}
+\endfoot
+
+\endlastfoot
+
+	\texttt{SGAN\_NO\_AA} & \cellcolor{Gray!3}$\bf 02$ & \cellcolor{Gray!3}$\bf \num{3.04e+00}$ & \cellcolor{Gray!3}$\bf 02$ & \cellcolor{Gray!3}$\bf \num{6.23e-01}$ &\cellcolor{Gray!3}$\bf 2.0$  \\
+	\texttt{SGAN\_NO\_AS} & \cellcolor{Gray!9}$\bf 04$ & \cellcolor{Gray!9}$\bf \num{3.05e+00}$ & \cellcolor{Gray!9}$\bf 04$ & \cellcolor{Gray!9}$\bf \num{6.51e-01}$ &\cellcolor{Gray!9}$\bf 4.0$  \\
+	\texttt{SGAN\_NO\_SA} & \cellcolor{Gray!14}$\bf 06$ & \cellcolor{Gray!14}$\bf \num{3.06e+00}$ & \cellcolor{Gray!0}$\bf 01$ & \cellcolor{Gray!0}$\bf \num{6.15e-01}$ &\cellcolor{Gray!7}$\bf 3.5$  \\
+	\texttt{SGAN\_NO\_SS} & \cellcolor{Gray!23}$\bf 09$ & \cellcolor{Gray!23}$\bf \num{3.06e+00}$ & \cellcolor{Gray!6}$\bf 03$ & \cellcolor{Gray!6}$\bf \num{6.38e-01}$ &\cellcolor{Gray!14}$\bf 6.0$  \\
+	\texttt{SGAN\_OS\_AA} & \cellcolor{Gray!34}$ 13$ & \cellcolor{Gray!34}$ \num{3.07e+00}$ & \cellcolor{Gray!74}$ 27$ & \cellcolor{Gray!74}$ \num{1.61e+02}$ &\cellcolor{Gray!54}$ 20.0$  \\
+	\texttt{SGAN\_OS\_AS} & \cellcolor{Gray!74}$ 27$ & \cellcolor{Gray!74}$ \num{3.38e+00}$ & \cellcolor{Gray!63}$ 23$ & \cellcolor{Gray!63}$ \num{2.95e+00}$ &\cellcolor{Gray!69}$ 25.0$  \\
+	\texttt{SGAN\_OS\_SA} & \cellcolor{Gray!46}$ 17$ & \cellcolor{Gray!46}$ \num{3.13e+00}$ & \cellcolor{Gray!77}$ 28$ & \cellcolor{Gray!77}$ \num{4.01e+02}$ &\cellcolor{Gray!61}$ 22.5$  \\
+	\texttt{SGAN\_OS\_SS} & \cellcolor{Gray!77}$ 28$ & \cellcolor{Gray!77}$ \num{3.43e+00}$ & \cellcolor{Gray!66}$ 24$ & \cellcolor{Gray!66}$ \num{2.97e+00}$ &\cellcolor{Gray!71}$ 26.0$  \\
+	\texttt{SGAN\_TS\_AA} & \cellcolor{Gray!26}$\bf 10$ & \cellcolor{Gray!26}$\bf \num{3.06e+00}$ & \cellcolor{Gray!29}$ 11$ & \cellcolor{Gray!29}$ \num{7.25e-01}$ &\cellcolor{Gray!27}$ 10.5$  \\
+	\texttt{SGAN\_TS\_AS} & \cellcolor{Gray!17}$\bf 07$ & \cellcolor{Gray!17}$\bf \num{3.06e+00}$ & \cellcolor{Gray!31}$ 12$ & \cellcolor{Gray!31}$ \num{7.34e-01}$ &\cellcolor{Gray!24}$\bf 9.5$  \\
+	\texttt{SGAN\_TS\_SA} & \cellcolor{Gray!31}$ 12$ & \cellcolor{Gray!31}$ \num{3.07e+00}$ & \cellcolor{Gray!23}$\bf 09$ & \cellcolor{Gray!23}$\bf \num{7.02e-01}$ &\cellcolor{Gray!27}$ 10.5$  \\
+	\texttt{SGAN\_TS\_SS} & \cellcolor{Gray!37}$ 14$ & \cellcolor{Gray!37}$ \num{3.08e+00}$ & \cellcolor{Gray!26}$\bf 10$ & \cellcolor{Gray!26}$\bf \num{7.22e-01}$ &\cellcolor{Gray!31}$ 12.0$  \\ \hline
+	\texttt{WGAN\_NO\_AA} & \cellcolor{Gray!57}$ 21$ & \cellcolor{Gray!57}$ \num{3.16e+00}$ & \cellcolor{Gray!89}$ 32$ & \cellcolor{Gray!89}$ \num{7.04e+03}$ &\cellcolor{Gray!73}$ 26.5$  \\
+	\texttt{WGAN\_NO\_AS} & \cellcolor{Gray!51}$ 19$ & \cellcolor{Gray!51}$ \num{3.14e+00}$ & \cellcolor{Gray!46}$ 17$ & \cellcolor{Gray!46}$ \num{1.18e+00}$ &\cellcolor{Gray!49}$ 18.0$  \\
+	\texttt{WGAN\_NO\_SA} & \cellcolor{Gray!63}$ 23$ & \cellcolor{Gray!63}$ \num{3.17e+00}$ & \cellcolor{Gray!86}$ 31$ & \cellcolor{Gray!86}$ \num{6.64e+03}$ &\cellcolor{Gray!74}$ 27.0$  \\
+	\texttt{WGAN\_NO\_SS} & \cellcolor{Gray!60}$ 22$ & \cellcolor{Gray!60}$ \num{3.17e+00}$ & \cellcolor{Gray!49}$ 18$ & \cellcolor{Gray!49}$ \num{1.19e+00}$ &\cellcolor{Gray!54}$ 20.0$  \\
+	\texttt{WGAN\_OS\_AA} & \cellcolor{Gray!29}$ 11$ & \cellcolor{Gray!29}$ \num{3.07e+00}$ & \cellcolor{Gray!40}$ 15$ & \cellcolor{Gray!40}$ \num{8.78e-01}$ &\cellcolor{Gray!34}$ 13.0$  \\
+	\texttt{WGAN\_OS\_AS} & \cellcolor{Gray!69}$ 25$ & \cellcolor{Gray!69}$ \num{3.32e+00}$ & \cellcolor{Gray!57}$ 21$ & \cellcolor{Gray!57}$ \num{2.80e+00}$ &\cellcolor{Gray!63}$ 23.0$  \\
+	\texttt{WGAN\_OS\_SA} & \cellcolor{Gray!40}$ 15$ & \cellcolor{Gray!40}$ \num{3.08e+00}$ & \cellcolor{Gray!43}$ 16$ & \cellcolor{Gray!43}$ \num{8.92e-01}$ &\cellcolor{Gray!41}$ 15.5$  \\
+	\texttt{WGAN\_OS\_SS} & \cellcolor{Gray!71}$ 26$ & \cellcolor{Gray!71}$ \num{3.34e+00}$ & \cellcolor{Gray!60}$ 22$ & \cellcolor{Gray!60}$ \num{2.82e+00}$ &\cellcolor{Gray!66}$ 24.0$  \\
+	\texttt{WGAN\_TS\_AA} & \cellcolor{Gray!0}$\bf 01$ & \cellcolor{Gray!0}$\bf \num{3.04e+00}$ & \cellcolor{Gray!17}$\bf 07$ & \cellcolor{Gray!17}$\bf \num{6.78e-01}$ &\cellcolor{Gray!9}$\bf 4.0$  \\
+	\texttt{WGAN\_TS\_AS} & \cellcolor{Gray!6}$\bf 03$ & \cellcolor{Gray!6}$\bf \num{3.04e+00}$ & \cellcolor{Gray!34}$ 13$ & \cellcolor{Gray!34}$ \num{7.47e-01}$ &\cellcolor{Gray!20}$\bf 8.0$  \\
+	\texttt{WGAN\_TS\_SA} & \cellcolor{Gray!20}$\bf 08$ & \cellcolor{Gray!20}$\bf \num{3.06e+00}$ & \cellcolor{Gray!20}$\bf 08$ & \cellcolor{Gray!20}$\bf \num{6.87e-01}$ &\cellcolor{Gray!20}$\bf 8.0$  \\
+	\texttt{WGAN\_TS\_SS} & \cellcolor{Gray!11}$\bf 05$ & \cellcolor{Gray!11}$\bf \num{3.05e+00}$ & \cellcolor{Gray!37}$ 14$ & \cellcolor{Gray!37}$ \num{7.56e-01}$ &\cellcolor{Gray!24}$\bf 9.5$  \\ \hline
+	\texttt{WGGP\_NO\_AA} & \cellcolor{Gray!54}$ 20$ & \cellcolor{Gray!54}$ \num{3.15e+00}$ & \cellcolor{Gray!97}$ 35$ & \cellcolor{Gray!97}$ \num{1.13e+04}$ &\cellcolor{Gray!76}$ 27.5$  \\
+	\texttt{WGGP\_NO\_AS} & \cellcolor{Gray!43}$ 16$ & \cellcolor{Gray!43}$ \num{3.12e+00}$ & \cellcolor{Gray!14}$\bf 06$ & \cellcolor{Gray!14}$\bf \num{6.72e-01}$ &\cellcolor{Gray!29}$ 11.0$  \\
+	\texttt{WGGP\_NO\_SA} & \cellcolor{Gray!66}$ 24$ & \cellcolor{Gray!66}$ \num{3.18e+00}$ & \cellcolor{Gray!100}$ 36$ & \cellcolor{Gray!100}$ \num{1.23e+04}$ &\cellcolor{Gray!83}$ 30.0$  \\
+	\texttt{WGGP\_NO\_SS} & \cellcolor{Gray!49}$ 18$ & \cellcolor{Gray!49}$ \num{3.13e+00}$ & \cellcolor{Gray!11}$\bf 05$ & \cellcolor{Gray!11}$\bf \num{6.71e-01}$ &\cellcolor{Gray!30}$ 11.5$  \\
+	\texttt{WGGP\_OS\_AA} & \cellcolor{Gray!83}$ 30$ & \cellcolor{Gray!83}$ \num{3.89e+00}$ & \cellcolor{Gray!83}$ 30$ & \cellcolor{Gray!83}$ \num{4.48e+03}$ &\cellcolor{Gray!83}$ 30.0$  \\
+	\texttt{WGGP\_OS\_AS} & \cellcolor{Gray!100}$ 36$ & \cellcolor{Gray!100}$ \num{4.50e+00}$ & \cellcolor{Gray!69}$ 25$ & \cellcolor{Gray!69}$ \num{3.10e+00}$ &\cellcolor{Gray!84}$ 30.5$  \\
+	\texttt{WGGP\_OS\_SA} & \cellcolor{Gray!80}$ 29$ & \cellcolor{Gray!80}$ \num{3.87e+00}$ & \cellcolor{Gray!80}$ 29$ & \cellcolor{Gray!80}$ \num{4.08e+03}$ &\cellcolor{Gray!80}$ 29.0$  \\
+	\texttt{WGGP\_OS\_SS} & \cellcolor{Gray!97}$ 35$ & \cellcolor{Gray!97}$ \num{4.25e+00}$ & \cellcolor{Gray!71}$ 26$ & \cellcolor{Gray!71}$ \num{3.30e+00}$ &\cellcolor{Gray!84}$ 30.5$  \\
+	\texttt{WGGP\_TS\_AA} & \cellcolor{Gray!91}$ 33$ & \cellcolor{Gray!91}$ \num{4.10e+00}$ & \cellcolor{Gray!91}$ 33$ & \cellcolor{Gray!91}$ \num{8.00e+03}$ &\cellcolor{Gray!91}$ 33.0$  \\
+	\texttt{WGGP\_TS\_AS} & \cellcolor{Gray!94}$ 34$ & \cellcolor{Gray!94}$ \num{4.15e+00}$ & \cellcolor{Gray!54}$ 20$ & \cellcolor{Gray!54}$ \num{1.28e+00}$ &\cellcolor{Gray!74}$ 27.0$  \\
+	\texttt{WGGP\_TS\_SA} & \cellcolor{Gray!89}$ 32$ & \cellcolor{Gray!89}$ \num{3.94e+00}$ & \cellcolor{Gray!94}$ 34$ & \cellcolor{Gray!94}$ \num{8.80e+03}$ &\cellcolor{Gray!91}$ 33.0$  \\
+	\texttt{WGGP\_TS\_SS} & \cellcolor{Gray!86}$ 31$ & \cellcolor{Gray!86}$ \num{3.91e+00}$ & \cellcolor{Gray!51}$ 19$ & \cellcolor{Gray!51}$ \num{1.20e+00}$ &\cellcolor{Gray!69}$ 25.0$  \\
+\end{xltabular}
