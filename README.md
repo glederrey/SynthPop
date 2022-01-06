@@ -3,7 +3,7 @@
 This is the repository associated with the article "*DATGAN: Integrating Expert Knowledge into Deep Learning for Synthetic Tabular Data*". All the code that has been developed for this article is given in this repository. If you want to use any piece of code in this repository, feel free to do it. However, please cite our article:
 > "Lederrey G., Hillel T., Bierlaire M., *DATGAN: Integrating Expert Knowledge into Deep Learning for Synthetic Tabular Data*, **not published yet**"
 
-Since this repository is a bit messy, we have created a pypi version of the DATGAN. You can visit the [DATGAN Github repository](https://www.markdownguide.org) or the [pypi page](https://pypi.org/project/datgan/).
+Since this repository is a bit messy, we have created a pypi version of the DATGAN. You can visit the [DATGAN Github repository](https://github.com/glederrey/DATGAN) or the [pypi page](https://pypi.org/project/datgan/).
 
 ## Content of the repository
 
