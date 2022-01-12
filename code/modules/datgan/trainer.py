@@ -5,6 +5,7 @@ from tensorpack import StagingInput, TowerTrainer
 from tensorpack.graph_builder import DataParallelBuilder, LeastLoadedDeviceSetter
 from tensorpack.tfutils.tower import TowerContext, TowerFuncWrapper
 
+
 class GANTrainerClipping(TowerTrainer):
     """GanTrainer model.
 

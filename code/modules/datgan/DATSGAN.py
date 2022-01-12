@@ -245,7 +245,6 @@ class DATSGAN:
             output_names=['output', 'z'],
         )
 
-        n_vars = len(self.metadata['details'].keys())
         self.simple_dataset_predictor = SimpleDatasetPredictor(
             predict_config,
             RandomZData((self.n_sources, self.batch_size, self.z_dim))
